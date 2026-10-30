@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="fr">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+	<title>Cadeaux</title>
+	<meta name="description" content="Les listes de cadeaux de Noël de la famille">
+	<meta name="theme-color" content="#a8201a" media="(prefers-color-scheme: light)">
+	<meta name="theme-color" content="#6e1a15" media="(prefers-color-scheme: dark)">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+	<meta name="apple-mobile-web-app-title" content="Cadeaux">
+	<link rel="manifest" href="manifest.webmanifest">
+	<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+	<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+	<link rel="stylesheet" href="style.css">
+	<script src="config.js" defer></script>
+	<script src="app.js" defer></script>
+</head>
+<body>
+	<div id="bandeau" class="bandeau" hidden></div>
+
+	<!-- Connexion : code famille puis choix du prénom -->
+	<main id="ecran-connexion" class="connexion" hidden>
+		<div class="connexion-carte">
+			<img src="icons/icon.svg" alt="" class="connexion-logo" width="72" height="72">
+			<h1>Cadeaux de Noël</h1>
+			<p class="discret">Les listes de la famille, sans gâcher la surprise.</p>
+
+			<form id="form-code" class="pile">
+				<label for="champ-code">Code famille</label>
+				<input id="champ-code" type="password" autocomplete="current-password" required>
+				<button type="submit" class="bouton principal">Entrer</button>
+			</form>
+
+			<div id="choix-membre" class="pile" hidden>
+				<h2>Qui es-tu ?</h2>
+				<div id="liste-membres" class="liste-membres"></div>
+				<form id="form-nouveau-membre" class="pile">
+					<label for="champ-prenom">Pas dans la liste ? Ajoute ton prénom</label>
+					<div class="ligne">
+						<input id="champ-prenom" type="text" maxlength="40" autocomplete="given-name" required>
+						<button type="submit" class="bouton">Ajouter</button>
+					</div>
+				</form>
+				<button type="button" id="bouton-autre-code" class="lien-bouton">Changer de code</button>
+			</div>
+			<p id="erreur-connexion" class="erreur" role="alert"></p>
+		</div>
+	</main>
+
+	<!-- Application -->
+	<div id="ecran-app" class="app" hidden>
+		<header class="entete">
+			<div>
+				<p class="entete-sur">Cadeaux de Noël</p>
+				<h1 id="titre-onglet">Ma liste</h1>
+			</div>
+			<div class="entete-actions">
+				<button type="button" id="bouton-actualiser" class="icone-bouton" aria-label="Actualiser">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/></svg>
+				</button>
+				<button type="button" id="bouton-menu" class="icone-bouton avatar" aria-label="Menu" aria-haspopup="menu" aria-expanded="false"></button>
+				<div id="menu" class="menu" role="menu" hidden>
+					<p id="menu-nom" class="menu-nom"></p>
+					<button type="button" role="menuitem" id="menu-installer" hidden>Installer l'app</button>
+					<button type="button" role="menuitem" id="menu-changer">Changer de personne</button>
+					<button type="button" role="menuitem" id="menu-deconnecter">Se déconnecter</button>
+				</div>
+			</div>
+		</header>
+
+		<main id="contenu" class="contenu" aria-live="polite"></main>
+
+		<div id="barre-selection" class="barre-selection" hidden>
+			<p id="resume-selection"></p>
+			<button type="button" id="bouton-offrir-selection" class="bouton principal">Je les offre</button>
+		</div>
+
+		<nav class="onglets" aria-label="Sections">
+			<button type="button" data-onglet="ma-liste" aria-current="page">
+				<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg>
+				<span>Ma liste</span>
+			</button>
+			<button type="button" data-onglet="famille">
+				<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 4a3 3 0 0 1 0 6M18 14a6 6 0 0 1 3 6"/></svg>
+				<span>Famille</span>
+			</button>
+			<button type="button" data-onglet="disponibles">
+				<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="18" height="13" rx="1"/><path d="M12 8v13M3 12h18M12 8c-2-4-6-4-6-1s6 1 6 1 6 2 6-1-4-3-6 1"/></svg>
+				<span>Disponibles</span>
+			</button>
+			<button type="button" data-onglet="reservations">
+				<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+				<span>J'offre</span>
+				<span id="compteur-reservations" class="pastille" hidden></span>
+			</button>
+		</nav>
+	</div>
+
+	<!-- Formulaire d'un cadeau -->
+	<dialog id="dialogue-cadeau" class="dialogue">
+		<form id="form-cadeau" method="dialog" class="pile">
+			<h2 id="titre-dialogue">Nouvelle idée</h2>
+			<label for="cadeau-titre">Quoi ?</label>
+			<input id="cadeau-titre" name="titre" maxlength="120" required placeholder="Ex : un pull en laine">
+			<label for="cadeau-description">Détails <span class="discret">(taille, couleur…)</span></label>
+			<textarea id="cadeau-description" name="description" maxlength="500" rows="3"></textarea>
+			<label for="cadeau-lien">Lien <span class="discret">(facultatif)</span></label>
+			<input id="cadeau-lien" name="lien" type="url" maxlength="500" placeholder="https://…" inputmode="url">
+			<div class="ligne deux">
+				<div class="pile">
+					<label for="cadeau-prix">Prix indicatif (€)</label>
+					<input id="cadeau-prix" name="prix" type="number" min="0" step="0.01" inputmode="decimal">
+				</div>
+				<div class="pile">
+					<label for="cadeau-priorite">Envie</label>
+					<select id="cadeau-priorite" name="priorite">
+						<option value="1">Très envie</option>
+						<option value="2" selected>Envie</option>
+						<option value="3">Si possible</option>
+					</select>
+				</div>
+			</div>
+			<p id="erreur-cadeau" class="erreur" role="alert"></p>
+			<div class="ligne fin">
+				<button type="button" id="bouton-annuler-cadeau" class="bouton">Annuler</button>
+				<button type="submit" class="bouton principal">Enregistrer</button>
+			</div>
+		</form>
+	</dialog>
+
+	<dialog id="dialogue-ios" class="dialogue">
+		<form method="dialog" class="pile">
+			<h2>Installer sur iPhone</h2>
+			<p>Dans Safari, touche <strong>Partager</strong> puis <strong>Sur l'écran d'accueil</strong>.</p>
+			<div class="ligne fin"><button class="bouton principal">OK</button></div>
+		</form>
+	</dialog>
+
+	<div id="toasts" class="toasts" aria-live="assertive"></div>
+	<noscript>Cette app a besoin de JavaScript.</noscript>
+</body>
+</html>
