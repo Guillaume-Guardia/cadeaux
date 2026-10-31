@@ -34,6 +34,14 @@
 			<div id="accueil-connexion" class="pile">
 				<button type="button" id="bouton-scanner" class="bouton principal">Scanner mon QR code</button>
 				<p class="discret">Ton QR code s'affiche sur un appareil déjà connecté (menu « Mon QR code »), ou un proche t'en montre un pour t'inviter.</p>
+				<details class="lien-recu">
+					<summary>J'ai reçu un lien</summary>
+					<form id="form-lien" class="pile">
+						<label for="champ-lien">Colle le lien reçu</label>
+						<input id="champ-lien" type="text" inputmode="url" autocomplete="off" required placeholder="https://…#cle=…">
+						<button type="submit" class="bouton">Se connecter</button>
+					</form>
+				</details>
 				<form id="form-code" class="pile">
 					<p class="sous-titre">Nouveau ? Ajoute-toi avec le code famille</p>
 					<label for="champ-code">Code famille</label>
@@ -161,7 +169,10 @@
 			<h2 id="qr-titre">Mon QR code</h2>
 			<div id="qr-image" class="qr-image"></div>
 			<p id="qr-aide" class="discret"></p>
-			<div class="ligne fin"><button class="bouton principal">Fermer</button></div>
+			<div class="ligne fin">
+				<button type="button" id="bouton-envoyer-lien" class="bouton">Envoyer le lien</button>
+				<button class="bouton principal">Fermer</button>
+			</div>
 		</form>
 	</dialog>
 

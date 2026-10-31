@@ -11,6 +11,7 @@ const CLES = {
 	etat: "cadeaux.etat",
 	onglet: "cadeaux.onglet",
 	familles: "cadeaux.familles",
+	versionApi: "cadeaux.versionApi",
 };
 
 function lireFamillesActives() {
@@ -65,6 +66,8 @@ const app = {
 	/** Secret Santa dont le membre a affiché le tirage (masqué par défaut). */
 	revele: new Set(),
 	occupe: false,
+	/** Version de l'API, renvoyée avec chaque réponse (affichée avec celle de l'app). */
+	versionApi: lireStockage(CLES.versionApi),
 };
 
 try {
@@ -121,6 +124,11 @@ async function appelerApiSansIndicateur(action, parametres) {
 		donnees = await reponse.json();
 	} catch {
 		throw new ErreurReseau("Le serveur ne répond pas correctement. Réessaie dans un instant.");
+	}
+	if (donnees.version && donnees.version !== app.versionApi) {
+		app.versionApi = donnees.version;
+		ecrireStockage(CLES.versionApi, donnees.version);
+		afficherVersions();
 	}
 	if (!donnees.ok) throw new Error(donnees.erreur || "Erreur inconnue.");
 	if (donnees.cle) garderCle(donnees.cle);
@@ -274,6 +282,28 @@ function famillesActives() {
 }
 
 const nomsFamilles = (familles) => familles.map((f) => f.nom).join(" + ");
+
+/** Vrai quand une partie seulement des familles est affichée : chaque onglet est alors filtré. */
+const filtreFamilles = () => famillesActives().length < app.etat.familles.length;
+
+/**
+ * Vrai si l'une de ces personnes (autre que soi) est dans les familles affichées ; toujours vrai
+ * sans filtre, même pour quelqu'un qui n'est plus dans aucune de ses familles.
+ */
+function dansFamillesAffichees(ids) {
+	if (!filtreFamilles()) return true;
+	const membres = new Set(famillesActives().flatMap((f) => f.membreIds));
+	return ids.some((id) => id !== moi() && membres.has(id));
+}
+
+/** Secret Santa d'au moins une des familles affichées. */
+function secretSantasAffiches() {
+	const actives = new Set(famillesActives().map((f) => f.id));
+	return app.etat.secretSantas.filter((s) => !filtreFamilles() || s.familleIds.some((id) => actives.has(id)));
+}
+
+/** Cadeaux que le membre offre, à des personnes des familles affichées. */
+const mesReservations = () => app.etat.cadeaux.filter((c) => offreurs(c).includes(moi()) && dansFamillesAffichees(c.pourIds));
 
 /** Personnes des familles affichées (sans doublon), sans le membre connecté. */
 function autresDeLaFamille() {
@@ -444,13 +474,17 @@ const TITRES = {
 };
 
 function rendreMaListe() {
-	const miens = app.etat.cadeaux.filter(estPourMoi).sort(parPriorite);
+	const tous = app.etat.cadeaux.filter(estPourMoi);
+	// Ses idées à soi seul sont vues de toutes ses familles ; une idée commune suit le filtre.
+	const miens = tous.filter((c) => c.pourIds.length === 1 || dansFamillesAffichees(c.pourIds)).sort(parPriorite);
+	const masques = tous.length - miens.length;
 	const ajouter = el("button", { type: "button", class: "bouton principal", onclick: () => ouvrirFormulaireCadeau(null, [moi()]) }, "+ Ajouter une idée");
-	if (miens.length === 0) {
+	if (miens.length === 0 && masques === 0) {
 		return [vide("Ta liste est vide. Ajoute tes envies : tes familles les verront, sans que tu saches qui offre quoi.", ajouter)];
 	}
 	return [
 		el("p", { class: "discret" }, `${miens.length} idée(s). Tu ne vois ni ce qui est réservé, ni ce que les autres te suggèrent : surprise !`),
+		masques ? el("p", { class: "discret" }, `${masques} idée(s) commune(s) avec d'autres familles, masquée(s) par le filtre.`) : null,
 		...miens.map((c) => carteCadeau(c, { pour: "moi" })),
 		el("div", {}, ajouter),
 	];
@@ -705,17 +739,18 @@ function rendreSecretSantas() {
 			el("h2", {}, "Secret Santa"),
 			el("button", { type: "button", class: "lien-bouton", onclick: ouvrirFormulaireSecretSanta }, "+ Organiser"),
 		),
-		app.etat.secretSantas.map(carteSecretSanta),
+		secretSantasAffiches().map(carteSecretSanta),
 	);
 }
 
 function rendreReservations() {
-	const miennes = app.etat.cadeaux.filter((c) => offreurs(c).includes(moi()));
+	const miennes = mesReservations();
 	if (miennes.length === 0) {
+		const ailleurs = app.etat.cadeaux.some((c) => offreurs(c).includes(moi()));
 		return [
 			rendreSecretSantas(),
 			vide(
-				"Tu n'offres encore rien.",
+				ailleurs ? `Tu n'offres rien dans ${nomsFamilles(famillesActives())}.` : "Tu n'offres encore rien.",
 				el("button", { type: "button", class: "bouton principal", onclick: () => changerOnglet("disponibles") }, "Voir les cadeaux disponibles"),
 			),
 		];
@@ -746,9 +781,13 @@ function rendreReservations() {
 
 function rendreHistorique() {
 	const ajouter = el("button", { type: "button", class: "bouton principal", onclick: ouvrirFormulaireHistorique }, "+ Ajouter");
-	const toutes = app.etat.historique;
-	if (toutes.length === 0) {
+	if (app.etat.historique.length === 0) {
 		return [vide("Ton historique est vide. Les cadeaux que tu offres y arrivent chaque 26 décembre ; tu peux aussi en ajouter.", ajouter)];
+	}
+	// Filtre des familles : les cadeaux offerts à l'un de leurs membres (pas aux destinataires en texte).
+	const toutes = app.etat.historique.filter((e) => dansFamillesAffichees(e.destinataires.map((d) => d.id).filter(Boolean)));
+	if (toutes.length === 0) {
+		return [vide(`Rien dans ton historique pour ${nomsFamilles(famillesActives())}.`, ajouter)];
 	}
 	const cle = (d) => d.id ?? `texte:${d.nom}`;
 	const destinataires = new Map();
@@ -863,7 +902,7 @@ function rendre() {
 		if (bouton.dataset.onglet === app.onglet) bouton.setAttribute("aria-current", "page");
 		else bouton.removeAttribute("aria-current");
 	}
-	const nbReservations = app.etat.cadeaux.filter((c) => offreurs(c).includes(moi())).length;
+	const nbReservations = mesReservations().length;
 	const pastille = $("#compteur-reservations");
 	pastille.hidden = nbReservations === 0;
 	pastille.textContent = String(nbReservations);
@@ -883,6 +922,7 @@ function enregistrerFamillesActives(ids) {
 	app.famillesActives = new Set(ids);
 	app.personnesFamille = new Set();
 	app.filtreDisponibles = "";
+	app.filtreHistorique = "";
 	app.selection.clear();
 	ecrireStockage(CLES.familles, JSON.stringify([...ids]));
 	rendre();
@@ -1377,6 +1417,18 @@ async function connecterAvecCle(cle) {
 	}
 }
 
+/** Lien reçu à distance, collé à la connexion (ex : app installée sur iPhone, hors de Safari). */
+function validerLien(evenement) {
+	evenement.preventDefault();
+	const cle = cleDuLien($("#champ-lien").value);
+	if (!cle) {
+		$("#erreur-connexion").textContent = "Ce n'est pas un lien de connexion à l'app Cadeaux.";
+		return;
+	}
+	$("#champ-lien").value = "";
+	connecterAvecCle(cle);
+}
+
 /** Clé contenue dans un lien de QR code (…/#cle=…), ou null. */
 function cleDuLien(texte) {
 	const trouve = /[#&]cle=([A-Za-z0-9]+)/.exec(String(texte));
@@ -1388,15 +1440,43 @@ function lienDeConnexion(cle) {
 	return `${location.origin}${location.pathname}#cle=${cle}`;
 }
 
-function afficherQr(titre, aide, cle) {
+/** Lien du QR code affiché et message qui l'accompagne, pour l'envoyer à distance. */
+let envoiQr = null;
+
+/** @param message texte du message qui accompagne le lien envoyé (« Envoyer le lien ») */
+function afficherQr(titre, aide, cle, message) {
 	fermerMenu();
+	envoiQr = { lien: lienDeConnexion(cle), message };
 	const qr = qrcode(0, "M");
-	qr.addData(lienDeConnexion(cle));
+	qr.addData(envoiQr.lien);
 	qr.make();
 	$("#qr-titre").textContent = titre;
 	$("#qr-aide").textContent = aide;
 	$("#qr-image").innerHTML = qr.createSvgTag({ cellSize: 6, margin: 4, scalable: true });
 	$("#dialogue-qr").showModal();
+}
+
+/**
+ * Envoie le lien du QR code à distance : partage du téléphone (SMS, messagerie, mail…), sinon
+ * copie dans le presse-papiers.
+ */
+async function envoyerLienQr() {
+	if (!envoiQr) return;
+	const { lien, message } = envoiQr;
+	if (navigator.share) {
+		try {
+			await navigator.share({ title: "Cadeaux de Noël", text: message, url: lien });
+			return;
+		} catch (erreur) {
+			if (erreur?.name === "AbortError") return;
+		}
+	}
+	try {
+		await navigator.clipboard.writeText(`${message}\n${lien}`);
+		notifier("Lien copié : colle-le dans un message.");
+	} catch {
+		prompt("Copie ce lien et envoie-le :", lien);
+	}
 }
 
 function afficherMonQr() {
@@ -1406,18 +1486,21 @@ function afficherMonQr() {
 	}
 	afficherQr(
 		"Mon QR code",
-		"Scanne-le avec ton autre appareil (appareil photo, ou « Scanner mon QR code » dans l'app). Ne le montre à personne d'autre : il ouvre ton compte.",
+		"Scanne-le avec ton autre appareil (appareil photo, ou « Scanner mon QR code » dans l'app), ou envoie-toi le lien. Ne le donne à personne d'autre : il ouvre ton compte.",
 		app.cle,
+		"Mon lien de connexion à Cadeaux de Noël (ne le transfère à personne) :",
 	);
 }
 
 async function inviter(personneInvitee) {
 	const cle = await modifier("inviter", { personneId: personneInvitee.id });
 	if (!cle) return;
+	const { prenom } = personneInvitee;
 	afficherQr(
-		`Inviter ${personneInvitee.prenom}`,
-		`Fais scanner ce QR code à ${personneInvitee.prenom} : il ouvre son compte sur son téléphone. Un nouveau QR code remplace le précédent.`,
+		`Inviter ${prenom}`,
+		`Fais scanner ce QR code à ${prenom}, ou envoie-lui le lien s'il est loin : il ouvre son compte sur son téléphone. Envoie-le à ${prenom} seulement. Un nouveau QR code (ou lien) remplace le précédent.`,
 		cle,
+		`${prenom}, voici ton invitation aux listes de cadeaux de Noël de la famille : ouvre ce lien sur ton téléphone (il est personnel, ne le transfère pas).`,
 	);
 }
 
@@ -1499,7 +1582,8 @@ function deconnecter(message = "") {
 	app.code = null;
 	app.membreId = null;
 	app.etat = null;
-	for (const cle of Object.values(CLES)) ecrireStockage(cle, null);
+	// La version de l'API reste : elle ne dit rien du membre.
+	for (const cle of Object.values(CLES)) if (cle !== CLES.versionApi) ecrireStockage(cle, null);
 	$("#champ-code").value = "";
 	afficherAccueil(message);
 }
@@ -1619,6 +1703,8 @@ function enregistrerServiceWorker() {
 
 function brancherEvenements() {
 	$("#form-code").addEventListener("submit", validerCode);
+	$("#form-lien").addEventListener("submit", validerLien);
+	$("#bouton-envoyer-lien").addEventListener("click", envoyerLienQr);
 	$("#form-nouveau-membre").addEventListener("submit", ajouterMoi);
 	$("#bouton-autre-code").addEventListener("click", () => afficherAccueil());
 	$("#bouton-scanner").addEventListener("click", ouvrirScanner);
@@ -1663,8 +1749,14 @@ function brancherEvenements() {
 	window.addEventListener("online", () => actualiser({ silencieux: true }));
 }
 
+/** Versions de l'app et de l'API, en bas du menu et de l'écran de connexion. */
+function afficherVersions() {
+	const texte = `Version ${window.VERSION_APP ?? "?"}${app.versionApi ? ` · API ${app.versionApi}` : ""}`;
+	for (const element of document.querySelectorAll(".version")) element.textContent = texte;
+}
+
 function demarrer() {
-	for (const element of document.querySelectorAll(".version")) element.textContent = `Version ${window.VERSION_APP ?? "?"}`;
+	afficherVersions();
 	$("#champ-naissance").max = versChampDate(new Date());
 	if (!RENDUS[app.onglet]) app.onglet = "ma-liste";
 	brancherEvenements();

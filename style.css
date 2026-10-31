@@ -357,6 +357,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
 .carte-note { font-size: 0.85rem; color: var(--or); font-weight: 600; }
 .deja-offert { background: var(--surface-2); border-radius: var(--rayon); padding: 10px 14px; }
 .deja-offert summary { cursor: pointer; font-weight: 600; }
+.lien-recu { text-align: left; }
+.lien-recu summary { cursor: pointer; color: var(--texte-doux); text-decoration: underline; }
+.lien-recu form { margin-top: 8px; }
 .deja-offert ul { margin: 8px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
 
 /* Historique */
