@@ -8,7 +8,7 @@ PWA des listes de cadeaux de Noël de la famille : **https://guillaume-guardia.g
 - **J'offre** : ce qu'on offre, à qui, et le total. Un cadeau supprimé après réservation y apparaît « retiré de la liste ». En tête, ses **Secret Santa** : la personne tirée au sort (masquée jusqu'à « Afficher ») et un lien vers sa liste ; « + Organiser » en crée un dans la famille affichée (participants, budget, exclusions comme un couple).
 - **Historique** : les cadeaux qu'on a offerts, visibles de soi seul. Les réservations y passent chaque 26 décembre ; on peut aussi en ajouter.
 
-Connexion : un **code famille**, puis son prénom (ou l'ajouter). Le menu (initiale en haut à droite) donne les codes de ses familles et permet d'en **rejoindre** ou d'en **créer** une autre ; avec plusieurs familles, on passe de l'une à l'autre en haut de l'écran. La version de l'app est affichée en bas du menu et de l'écran de connexion.
+Connexion : un **code famille**, puis son prénom (ou s'ajouter, avec son anniversaire si on veut). Le menu (initiale en haut à droite) donne les codes de ses familles, le **profil** (nom, anniversaire, affiché sur sa fiche) et permet de **rejoindre** ou de **créer** une famille. Avec plusieurs familles, des pastilles en haut des onglets Famille et Disponibles choisissent lesquelles afficher, une ou plusieurs à la fois. La version de l'app est affichée en bas du menu et de l'écran de connexion.
 
 L'app s'installe sur le téléphone (Android/ordinateur : menu → Installer l'app ; iPhone : Safari → Partager → Sur l'écran d'accueil). Hors ligne, elle affiche les dernières listes chargées, en lecture seule.
 

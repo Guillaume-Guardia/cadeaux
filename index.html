@@ -20,6 +20,7 @@
 	<script src="app.js" defer></script>
 </head>
 <body>
+	<div id="chargement" class="chargement" hidden></div>
 	<div id="bandeau" class="bandeau" hidden></div>
 
 	<!-- Connexion : code famille puis choix du prénom -->
@@ -39,11 +40,12 @@
 				<h2 id="titre-choix">Qui es-tu ?</h2>
 				<div id="liste-membres" class="liste-membres"></div>
 				<form id="form-nouveau-membre" class="pile">
-					<label for="champ-prenom">Pas dans la liste ? Ajoute ton prénom</label>
-					<div class="ligne">
-						<input id="champ-prenom" type="text" maxlength="40" autocomplete="given-name" required>
-						<button type="submit" class="bouton">Ajouter</button>
-					</div>
+					<p class="sous-titre">Pas dans la liste ? Ajoute-toi</p>
+					<label for="champ-prenom">Prénom</label>
+					<input id="champ-prenom" type="text" maxlength="40" autocomplete="given-name" required>
+					<label for="champ-naissance">Anniversaire <span class="discret">(facultatif)</span></label>
+					<input id="champ-naissance" type="date" autocomplete="bday">
+					<button type="submit" class="bouton">Ajouter</button>
 				</form>
 				<button type="button" id="bouton-autre-code" class="lien-bouton">Changer de code</button>
 			</div>
@@ -67,6 +69,7 @@
 				<div id="menu" class="menu" role="menu" hidden>
 					<p id="menu-nom" class="menu-nom"></p>
 					<div id="menu-familles" class="menu-familles"></div>
+					<button type="button" role="menuitem" id="menu-profil">Mon profil</button>
 					<button type="button" role="menuitem" id="menu-rejoindre">Rejoindre une famille</button>
 					<button type="button" role="menuitem" id="menu-creer">Créer une famille</button>
 					<button type="button" role="menuitem" id="menu-installer" hidden>Installer l'app</button>

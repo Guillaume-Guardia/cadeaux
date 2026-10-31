@@ -390,3 +390,19 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
 .tirage .masque { letter-spacing: 0.1em; color: var(--texte-doux); }
 .groupe-titre .lien-bouton { font-weight: 600; color: var(--rouge); text-decoration: none; }
 .exclusion select { flex: 1; min-width: 0; }
+
+/* Anniversaire, connexion */
+.anniversaire { color: var(--or); font-weight: 600; font-size: 0.95rem; }
+.sous-titre { font-weight: 600; margin-top: 8px; }
+input[type="date"] { min-height: 44px; }
+
+/* Barre de chargement pendant les appels au serveur */
+.chargement {
+	position: fixed; z-index: 30; top: 0; left: 0; right: 0;
+	height: 3px;
+	background: linear-gradient(90deg, transparent, var(--or), transparent);
+	background-size: 50% 100%;
+	background-repeat: no-repeat;
+	animation: chargement 1s ease-in-out infinite;
+}
+@keyframes chargement { from { background-position: -50% 0; } to { background-position: 150% 0; } }

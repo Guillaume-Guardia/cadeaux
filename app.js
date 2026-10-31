@@ -80,7 +80,23 @@ class ErreurReseau extends Error {}
  * Appelle l'API. Corps en text/plain : pas de requête préalable CORS, que les Web Apps Apps Script
  * ne gèrent pas.
  */
+let appelsEnCours = 0;
+
+function signalerChargement(delta) {
+	appelsEnCours += delta;
+	$("#chargement").hidden = appelsEnCours === 0;
+}
+
 async function appelerApi(action, parametres = {}) {
+	signalerChargement(1);
+	try {
+		return await appelerApiSansIndicateur(action, parametres);
+	} finally {
+		signalerChargement(-1);
+	}
+}
+
+async function appelerApiSansIndicateur(action, parametres) {
 	let reponse;
 	try {
 		reponse = await fetch(window.API_URL, {
@@ -193,6 +209,24 @@ const formatEuro = new Intl.NumberFormat("fr-FR", { style: "currency", currency:
 const prix = (valeur) => (typeof valeur === "number" ? formatEuro.format(valeur) : "");
 const formatDate = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long", year: "numeric" });
 const ENVIES = { 1: "Très envie", 2: "Envie", 3: "Si possible" };
+const formatAnniversaire = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long" });
+
+/** « aaaa-mm-jj » d'une date, pour un champ date. */
+function versChampDate(date) {
+	if (!date) return "";
+	const d = new Date(date);
+	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** « 🎂 20 avril · 34 ans » */
+function anniversaire(naissance) {
+	if (!naissance) return null;
+	const date = new Date(naissance);
+	const aujourdhui = new Date();
+	let age = aujourdhui.getFullYear() - date.getFullYear();
+	if (aujourdhui < new Date(aujourdhui.getFullYear(), date.getMonth(), date.getDate())) age--;
+	return `🎂 ${formatAnniversaire.format(date)} · ${age} an${age > 1 ? "s" : ""}`;
+}
 
 function notifier(message, erreur = false) {
 	const toast = el("div", { class: `toast${erreur ? " erreur-toast" : ""}`, role: erreur ? "alert" : "status" }, message);
@@ -424,6 +458,7 @@ function rendreFamille() {
 			el("h2", {}, choisie.nom ? `${choisie.prenom} ${choisie.nom}` : choisie.prenom),
 			el("span", { class: "discret" }, sesCadeaux.length ? `${libres} disponible(s) sur ${sesCadeaux.length}` : ""),
 		),
+		choisie.naissance ? el("p", { class: "anniversaire" }, anniversaire(choisie.naissance)) : null,
 		choisie.compte ? null : el("p", { class: "discret" }, `${choisie.prenom} n'utilise pas l'app : la famille tient sa liste.`),
 		sesCadeaux.length === 0
 			? vide(`${choisie.prenom} n'a encore rien demandé.`)
@@ -977,7 +1012,7 @@ async function supprimerSecretSanta(s) {
 
 /**
  * Ouvre le petit formulaire générique.
- * @param champs [{ nom, libelle, maxlength?, requis?, options? }] : avec `options`
+ * @param champs [{ nom, libelle, type?, valeur?, maxlength?, requis?, options? }] : avec `options`
  * ([{ valeur, libelle }]), une liste de choix au lieu d'un texte
  * @param valider (valeurs, afficherErreur) => Promise<boolean> : vrai pour fermer
  */
@@ -992,7 +1027,16 @@ function ouvrirDialogueSimple({ titre, aide = "", champs, bouton = "Valider", va
 			el("label", { for: `simple-${c.nom}` }, c.libelle),
 			c.options
 				? el("select", { id: `simple-${c.nom}`, name: c.nom }, c.options.map((o) => el("option", { value: o.valeur }, o.libelle)))
-				: el("input", { id: `simple-${c.nom}`, name: c.nom, type: "text", maxlength: c.maxlength ?? 60, required: c.requis !== false, autocomplete: "off" }),
+				: el("input", {
+						id: `simple-${c.nom}`,
+						name: c.nom,
+						type: c.type ?? "text",
+						value: c.valeur ?? "",
+						max: c.type === "date" ? versChampDate(new Date()) : null,
+						maxlength: c.type === "date" ? null : (c.maxlength ?? 60),
+						required: c.requis !== false,
+						autocomplete: "off",
+					}),
 		]),
 	);
 	const form = $("#form-simple");
@@ -1052,16 +1096,31 @@ function ouvrirAjoutPersonne() {
 		champs: [
 			{ nom: "prenom", libelle: "Prénom", maxlength: 40 },
 			{ nom: "nom", libelle: "Nom (facultatif)", maxlength: 60, requis: false },
+			{ nom: "naissance", libelle: "Anniversaire (facultatif)", type: "date", requis: false },
 			...(familles.length > 1 ? [{ nom: "familleId", libelle: "Famille", options: familles.map((f) => ({ valeur: f.id, libelle: f.nom })) }] : []),
 		],
 		bouton: "Ajouter",
-		valider: async ({ prenom, nom, familleId = familles[0].id }, erreur) => {
-			const ajoutee = await modifier("ajouter-personne", { familleId, prenom, nom }, `${prenom.trim()} ajouté(e).`, erreur);
+		valider: async ({ prenom, nom, naissance, familleId = familles[0].id }, erreur) => {
+			const ajoutee = await modifier("ajouter-personne", { familleId, prenom, nom, naissance }, `${prenom.trim()} ajouté(e).`, erreur);
 			if (!ajoutee) return false;
 			app.personneFamille = ajoutee.id;
 			changerOnglet("famille");
 			return true;
 		},
+	});
+}
+
+function ouvrirProfil() {
+	const membre = app.etat.moi;
+	ouvrirDialogueSimple({
+		titre: `Mon profil : ${membre.prenom}`,
+		aide: "Ton anniversaire s'affiche sur ta fiche, pour les membres de tes familles.",
+		champs: [
+			{ nom: "nom", libelle: "Nom (facultatif)", maxlength: 60, requis: false, valeur: membre.nom },
+			{ nom: "naissance", libelle: "Anniversaire", type: "date", requis: false, valeur: versChampDate(membre.naissance) },
+		],
+		bouton: "Enregistrer",
+		valider: async (profil, erreur) => Boolean(await modifier("modifier-profil", { profil }, "Profil enregistré.", erreur)),
 	});
 }
 
@@ -1093,7 +1152,7 @@ function afficherChoixMembre({ famille, personnes }) {
 		...personnes.map((p) =>
 			el(
 				"button",
-				{ type: "button", class: "bouton", onclick: () => connecter("choisir", { personneId: p.id }) },
+				{ type: "button", class: "bouton", onclick: (e) => connecter("choisir", { personneId: p.id }, e.currentTarget) },
 				// Deux prénoms identiques : le nom les distingue.
 				prenoms.filter((x) => x === p.prenom).length > 1 && p.nom ? `${p.prenom} ${p.nom}` : p.prenom,
 			),
@@ -1128,10 +1187,14 @@ async function validerCode(evenement) {
 }
 
 /** Choisit (« choisir ») ou crée (« ajouter-moi ») le membre, puis ouvre l'app. */
-async function connecter(action, parametres) {
+async function connecter(action, parametres, bouton = null) {
 	$("#erreur-connexion").textContent = "";
 	app.membreId = null;
 	app.selection.clear();
+	const boutons = [...document.querySelectorAll("#choix-membre button")];
+	const libelle = bouton?.textContent;
+	for (const b of boutons) b.disabled = true;
+	if (bouton) bouton.textContent = "Chargement…";
 	try {
 		appliquerEtat(await appelerApi(action, parametres));
 		afficherEcran("app");
@@ -1141,12 +1204,19 @@ async function connecter(action, parametres) {
 		}
 	} catch (erreur) {
 		$("#erreur-connexion").textContent = erreur.message;
+	} finally {
+		for (const b of boutons) b.disabled = false;
+		if (bouton) bouton.textContent = libelle;
 	}
 }
 
 async function ajouterMoi(evenement) {
 	evenement.preventDefault();
-	await connecter("ajouter-moi", { prenom: $("#champ-prenom").value });
+	await connecter(
+		"ajouter-moi",
+		{ prenom: $("#champ-prenom").value, naissance: $("#champ-naissance").value },
+		evenement.submitter,
+	);
 }
 
 async function changerDePersonne() {
@@ -1282,6 +1352,7 @@ function brancherEvenements() {
 	document.addEventListener("keydown", (e) => {
 		if (e.key === "Escape") fermerMenu();
 	});
+	$("#menu-profil").addEventListener("click", ouvrirProfil);
 	$("#menu-rejoindre").addEventListener("click", ouvrirRejoindre);
 	$("#menu-creer").addEventListener("click", ouvrirCreer);
 	$("#menu-installer").addEventListener("click", installer);
@@ -1300,6 +1371,7 @@ function brancherEvenements() {
 
 function demarrer() {
 	for (const element of document.querySelectorAll(".version")) element.textContent = `Version ${window.VERSION_APP ?? "?"}`;
+	$("#champ-naissance").max = versChampDate(new Date());
 	if (!RENDUS[app.onglet]) app.onglet = "ma-liste";
 	brancherEvenements();
 	enregistrerServiceWorker();
