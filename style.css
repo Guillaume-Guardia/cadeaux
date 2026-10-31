@@ -397,3 +397,11 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
 @media (max-width: 360px) {
 	.onglets button { font-size: 0.68rem; }
 }
+
+/* Secret Santa */
+.carte.secret-santa { border-color: var(--or); background: linear-gradient(var(--or-fond), var(--surface) 70%); }
+.tirage { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; font-size: 1.05rem; }
+.tirage strong { color: var(--rouge); font-size: 1.15rem; }
+.tirage .masque { letter-spacing: 0.1em; color: var(--texte-doux); }
+.groupe-titre .lien-bouton { font-weight: 600; color: var(--rouge); text-decoration: none; }
+.exclusion select { flex: 1; min-width: 0; }

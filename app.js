@@ -50,12 +50,14 @@ const app = {
 	selection: new Set(),
 	/** Idée en cours d'édition : { cadeau, pourId }. */
 	edition: null,
+	/** Secret Santa dont le membre a affiché le tirage (masqué par défaut). */
+	revele: new Set(),
 	occupe: false,
 };
 
 try {
 	const etat = JSON.parse(lireStockage(CLES.etat) || "null");
-	if (etat?.moi && etat.moi.id === app.membreId && Array.isArray(etat.familles)) app.etat = etat;
+	if (etat?.moi && etat.moi.id === app.membreId && Array.isArray(etat.secretSantas)) app.etat = etat;
 } catch {
 	// État en cache illisible : il sera rechargé.
 }
@@ -457,10 +459,80 @@ function rendreDisponibles() {
 	];
 }
 
+function carteSecretSanta(s) {
+	const famille = app.etat.familles.find((f) => f.id === s.familleId);
+	const organisateur = s.organisateurId === moi();
+	const revele = app.revele.has(s.id);
+	const receveur = s.monReceveurId ? personne(s.monReceveurId) : null;
+	const basculer = () => {
+		if (revele) app.revele.delete(s.id);
+		else app.revele.add(s.id);
+		rendre();
+	};
+	return el(
+		"article",
+		{ class: "carte secret-santa" },
+		el(
+			"div",
+			{ class: "carte-corps" },
+			el(
+				"div",
+				{ class: "carte-haut" },
+				el("h3", { class: "carte-titre" }, `🎅 ${s.nom}`),
+				el("span", { class: "carte-prix" }, s.budget ? `${prix(s.budget)} max` : ""),
+			),
+			el(
+				"p",
+				{ class: "carte-description" },
+				[
+					famille ? `Famille ${famille.nom}` : "",
+					`${s.participantIds.length} participants`,
+					organisateur ? "organisé par toi" : `organisé par ${prenomDe(s.organisateurId)}`,
+				]
+					.filter(Boolean)
+					.join(" · "),
+			),
+			s.monReceveurId
+				? el(
+						"div",
+						{ class: "tirage" },
+						el("span", {}, "Tu offres à "),
+						el("strong", { class: revele ? "" : "masque" }, revele ? (receveur?.prenom ?? "?") : "••••••"),
+						el("button", { type: "button", class: "lien-bouton", onclick: basculer }, revele ? "Masquer" : "Afficher"),
+					)
+				: el("p", { class: "discret" }, "Tu ne participes pas : tu ne vois aucun tirage."),
+			el(
+				"div",
+				{ class: "carte-actions" },
+				s.monReceveurId && revele && receveur
+					? el("button", { type: "button", class: "bouton petit principal", onclick: () => voirListe(s.familleId, receveur.id) }, "Voir sa liste")
+					: null,
+				organisateur ? el("button", { type: "button", class: "bouton petit", onclick: () => relancerTirage(s) }, "Relancer le tirage") : null,
+				organisateur ? el("button", { type: "button", class: "bouton petit danger", onclick: () => supprimerSecretSanta(s) }, "Supprimer") : null,
+			),
+		),
+	);
+}
+
+function rendreSecretSantas() {
+	return el(
+		"section",
+		{ class: "groupe" },
+		el(
+			"div",
+			{ class: "groupe-titre" },
+			el("h2", {}, "Secret Santa"),
+			el("button", { type: "button", class: "lien-bouton", onclick: ouvrirFormulaireSecretSanta }, "+ Organiser"),
+		),
+		app.etat.secretSantas.map(carteSecretSanta),
+	);
+}
+
 function rendreReservations() {
 	const miennes = app.etat.cadeaux.filter((c) => c.reserveParId === moi());
 	if (miennes.length === 0) {
 		return [
+			rendreSecretSantas(),
 			vide(
 				"Tu n'offres encore rien.",
 				el("button", { type: "button", class: "bouton principal", onclick: () => changerOnglet("disponibles") }, "Voir les cadeaux disponibles"),
@@ -471,6 +543,7 @@ function rendreReservations() {
 	const total = actifs.reduce((somme, c) => somme + (c.prix ?? 0), 0);
 	const destinataires = [...new Set(miennes.map((c) => c.proprietaireId))];
 	return [
+		rendreSecretSantas(),
 		el("div", { class: "total" }, el("span", {}, `${actifs.length} cadeau(x)`), el("span", {}, `≈ ${prix(total)}`)),
 		destinataires.map((id) =>
 			el(
@@ -760,6 +833,85 @@ async function enregistrerHistorique(evenement) {
 async function supprimerEntree(entree) {
 	if (!confirm(`Retirer « ${entree.details} » de ton historique ?`)) return;
 	await modifier("supprimer-historique", { entreeId: entree.id }, "Retiré de ton historique.");
+}
+
+// ---------------------------------------------------------------------------
+// Secret Santa
+// ---------------------------------------------------------------------------
+
+function voirListe(familleId, personneId) {
+	changerFamille(familleId);
+	app.personneFamille = personneId;
+	changerOnglet("famille");
+}
+
+function ajouterLigneExclusion(participants) {
+	const options = () => participants.map((p) => el("option", { value: p.id }, p.prenom));
+	const ligne = el(
+		"div",
+		{ class: "ligne exclusion" },
+		el("select", { "aria-label": "Personne" }, options()),
+		el("span", { class: "discret" }, "↔"),
+		el("select", { "aria-label": "Ne tire pas" }, options()),
+		el("button", { type: "button", class: "icone-supprimer", "aria-label": "Retirer l'exclusion", onclick: () => ligne.remove() }, "×"),
+	);
+	$("#secret-santa-exclusions").append(ligne);
+}
+
+function ouvrirFormulaireSecretSanta() {
+	const famille = familleCourante();
+	if (!famille) return;
+	const participants = famille.membreIds
+		.map(personne)
+		.filter(Boolean)
+		.sort((a, b) => a.prenom.localeCompare(b.prenom, "fr"));
+	const form = $("#form-secret-santa");
+	form.reset();
+	$("#erreur-secret-santa").textContent = "";
+	$("#aide-secret-santa").textContent = `Famille ${famille.nom}. Pour une autre famille, change de famille en haut de l'écran.`;
+	form.nom.value = `Secret Santa Noël ${new Date().getFullYear()}`;
+	$("#secret-santa-participants").replaceChildren(
+		...participants.map((p) =>
+			el("label", { class: "case-texte" }, el("input", { type: "checkbox", name: "participant", value: p.id, checked: true }), p.prenom),
+		),
+	);
+	$("#secret-santa-exclusions").replaceChildren();
+	$("#bouton-ajouter-exclusion").onclick = () => ajouterLigneExclusion(participants);
+	app.edition = { familleId: famille.id };
+	$("#dialogue-secret-santa").showModal();
+}
+
+async function enregistrerSecretSanta(evenement) {
+	evenement.preventDefault();
+	const form = evenement.target;
+	const secretSanta = {
+		familleId: app.edition.familleId,
+		nom: form.nom.value,
+		budget: form.budget.value,
+		participantIds: [...form.querySelectorAll("input[name=participant]:checked")].map((c) => c.value),
+		exclusions: [...$("#secret-santa-exclusions").querySelectorAll(".exclusion")]
+			.map((ligne) => [...ligne.querySelectorAll("select")].map((s) => s.value))
+			.filter(([a, b]) => a !== b),
+	};
+	if (secretSanta.participantIds.length < 3) {
+		$("#erreur-secret-santa").textContent = "Il faut au moins 3 participants.";
+		return;
+	}
+	const cree = await modifier("creer-secret-santa", { secretSanta }, "Tirage fait ! Chacun découvre sa personne dans « J'offre ».", (message) => {
+		$("#erreur-secret-santa").textContent = message;
+	});
+	if (cree) $("#dialogue-secret-santa").close();
+}
+
+async function relancerTirage(s) {
+	if (!confirm(`Refaire le tirage de « ${s.nom} » ? Chacun aura une nouvelle personne : préviens les participants.`)) return;
+	app.revele.delete(s.id);
+	await modifier("relancer-tirage", { secretSantaId: s.id }, "Nouveau tirage fait.");
+}
+
+async function supprimerSecretSanta(s) {
+	if (!confirm(`Supprimer « ${s.nom} » et son tirage ?`)) return;
+	await modifier("supprimer-secret-santa", { secretSantaId: s.id }, "Secret Santa supprimé.");
 }
 
 // ---------------------------------------------------------------------------
@@ -1056,6 +1208,7 @@ function brancherEvenements() {
 	$("#bouton-autre-code").addEventListener("click", () => deconnecter());
 	$("#form-cadeau").addEventListener("submit", enregistrerCadeau);
 	$("#form-historique").addEventListener("submit", enregistrerHistorique);
+	$("#form-secret-santa").addEventListener("submit", enregistrerSecretSanta);
 	for (const bouton of document.querySelectorAll("[data-fermer]")) {
 		bouton.addEventListener("click", () => bouton.closest("dialog").close());
 	}

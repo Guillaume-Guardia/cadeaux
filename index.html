@@ -180,6 +180,33 @@
 		</form>
 	</dialog>
 
+	<!-- Organiser un Secret Santa -->
+	<dialog id="dialogue-secret-santa" class="dialogue">
+		<form id="form-secret-santa" method="dialog" class="pile">
+			<h2>Organiser un Secret Santa</h2>
+			<p id="aide-secret-santa" class="discret"></p>
+			<label for="secret-santa-nom">Nom</label>
+			<input id="secret-santa-nom" name="nom" maxlength="60" required>
+			<label for="secret-santa-budget">Budget par cadeau (€) <span class="discret">(facultatif)</span></label>
+			<input id="secret-santa-budget" name="budget" type="number" min="0" step="1" inputmode="decimal">
+			<fieldset class="destinataires">
+				<legend>Participants</legend>
+				<div id="secret-santa-participants" class="cases"></div>
+			</fieldset>
+			<fieldset class="destinataires">
+				<legend>Exclusions <span class="discret">(ne peuvent pas se tirer, ex : un couple)</span></legend>
+				<div id="secret-santa-exclusions" class="pile"></div>
+				<button type="button" id="bouton-ajouter-exclusion" class="bouton petit">+ Exclusion</button>
+			</fieldset>
+			<p class="discret">Le tirage est fait aussitôt. Chacun ne voit que la personne à qui il offre, toi compris.</p>
+			<p id="erreur-secret-santa" class="erreur" role="alert"></p>
+			<div class="ligne fin">
+				<button type="button" class="bouton" data-fermer>Annuler</button>
+				<button type="submit" class="bouton principal">Tirer au sort</button>
+			</div>
+		</form>
+	</dialog>
+
 	<!-- Petit formulaire générique (rejoindre / créer une famille, ajouter une personne) -->
 	<dialog id="dialogue-simple" class="dialogue">
 		<form id="form-simple" method="dialog" class="pile">
