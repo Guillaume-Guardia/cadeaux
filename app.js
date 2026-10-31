@@ -9,8 +9,16 @@ const CLES = {
 	membre: "cadeaux.membre",
 	etat: "cadeaux.etat",
 	onglet: "cadeaux.onglet",
-	famille: "cadeaux.famille",
+	familles: "cadeaux.familles",
 };
+
+function lireFamillesActives() {
+	try {
+		return new Set(JSON.parse(lireStockage(CLES.familles) || "[]"));
+	} catch {
+		return new Set();
+	}
+}
 
 function lireStockage(cle) {
 	try {
@@ -39,8 +47,8 @@ const app = {
 	membreId: lireStockage(CLES.membre),
 	/** { moi, familles, personnes, cadeaux, historique } renvoyé par l'API. */
 	etat: null,
-	/** Famille affichée (Famille, Disponibles). */
-	familleId: lireStockage(CLES.famille),
+	/** Familles affichées (Famille, Disponibles) ; vide = toutes. */
+	famillesActives: lireFamillesActives(),
 	horsLigne: false,
 	onglet: lireStockage(CLES.onglet) || "ma-liste",
 	personneFamille: null,
@@ -196,16 +204,23 @@ const moi = () => app.etat.moi.id;
 const personne = (id) => app.etat?.personnes.find((p) => p.id === id);
 const prenomDe = (id) => (id === app.etat?.moi.id ? "toi" : (personne(id)?.prenom ?? "quelqu'un"));
 
-function familleCourante() {
+/** Familles affichées : celles activées, ou toutes si aucune ne l'est. */
+function famillesActives() {
 	const { familles } = app.etat;
-	return familles.find((f) => f.id === app.familleId) ?? familles[0] ?? null;
+	const actives = familles.filter((f) => app.famillesActives.has(f.id));
+	return actives.length ? actives : familles;
 }
 
-/** Personnes de la famille affichée, sans le membre connecté. */
+const nomsFamilles = (familles) => familles.map((f) => f.nom).join(" + ");
+
+/** Personnes des familles affichées (sans doublon), sans le membre connecté. */
 function autresDeLaFamille() {
-	const famille = familleCourante();
-	if (!famille) return [];
-	return famille.membreIds.filter((id) => id !== moi()).map(personne).filter(Boolean);
+	const ids = new Set(famillesActives().flatMap((f) => f.membreIds));
+	ids.delete(moi());
+	return [...ids]
+		.map(personne)
+		.filter(Boolean)
+		.sort((a, b) => a.prenom.localeCompare(b.prenom, "fr"));
 }
 
 /** Même règle que le serveur : ses idées et suggestions, et les listes des proches sans compte. */
@@ -342,12 +357,30 @@ function dejaOffertA(id) {
 	);
 }
 
+/**
+ * Pastilles des familles du membre, comme celles des membres (rien s'il n'en a qu'une) : chacune
+ * s'active ou se désactive, plusieurs peuvent l'être à la fois.
+ */
+function pucesFamilles() {
+	const { familles } = app.etat;
+	if (familles.length < 2) return null;
+	const actives = new Set(famillesActives().map((f) => f.id));
+	return el(
+		"div",
+		{ class: "puces puces-familles", role: "group", "aria-label": "Familles affichées" },
+		familles.map((f) =>
+			el("button", { type: "button", "aria-pressed": String(actives.has(f.id)), onclick: () => basculerFamille(f.id) }, f.nom),
+		),
+	);
+}
+
 function rendreFamille() {
 	const autres = autresDeLaFamille();
 	if (autres.length === 0) {
 		return [
+			pucesFamilles(),
 			vide(
-				`Personne d'autre dans la famille ${familleCourante()?.nom ?? ""} pour l'instant. Partage le code (menu en haut à droite), ou ajoute un proche qui n'utilisera pas l'app (enfant, grands-parents…).`,
+				`Personne d'autre dans ${nomsFamilles(famillesActives())} pour l'instant. Partage le code (menu en haut à droite), ou ajoute un proche qui n'utilisera pas l'app (enfant, grands-parents…).`,
 				el("button", { type: "button", class: "bouton", onclick: ouvrirAjoutPersonne }, "Ajouter une personne"),
 			),
 		];
@@ -383,6 +416,7 @@ function rendreFamille() {
 		choisie.compte ? `+ Suggérer une idée pour ${choisie.prenom}` : `+ Ajouter une idée pour ${choisie.prenom}`,
 	);
 	return [
+		pucesFamilles(),
 		puces,
 		el(
 			"div",
@@ -440,12 +474,13 @@ function rendreDisponibles() {
 			el("option", { value: "prix-decroissant", selected: app.triDisponibles === "prix-decroissant" }, "Prix décroissant"),
 		),
 	);
-	if (libres.length === 0) return [filtres, vide("Plus aucun cadeau disponible ici. Tout est déjà réservé !")];
+	if (libres.length === 0) return [pucesFamilles(), filtres, vide("Plus aucun cadeau disponible ici. Tout est déjà réservé !")];
 
 	const groupes = autres
 		.map((p) => ({ personne: p, cadeaux: libres.filter((c) => c.proprietaireId === p.id) }))
 		.filter((g) => g.cadeaux.length > 0);
 	return [
+		pucesFamilles(),
 		filtres,
 		el("p", { class: "discret" }, "Coche plusieurs cadeaux pour les réserver d'un coup."),
 		groupes.map((g) =>
@@ -645,13 +680,10 @@ function rendreEntete() {
 	$("#bouton-menu").textContent = membre.prenom.charAt(0).toUpperCase();
 	$("#menu-nom").textContent = `Connecté en tant que ${membre.prenom}`;
 
-	const choix = $("#choix-famille");
-	const plusieurs = familles.length > 1;
-	choix.hidden = !plusieurs;
-	$("#libelle-famille").textContent = plusieurs ? "Famille" : familles[0] ? `Famille ${familles[0].nom}` : "Cadeaux de Noël";
-	if (plusieurs) {
-		choix.replaceChildren(...familles.map((f) => el("option", { value: f.id, selected: f.id === familleCourante()?.id }, f.nom)));
-	}
+	const actives = famillesActives();
+	$("#libelle-famille").textContent = actives.length
+		? `${actives.length > 1 ? "Familles" : "Famille"} ${nomsFamilles(actives)}`
+		: "Cadeaux de Noël";
 
 	$("#menu-familles").replaceChildren(
 		...familles.map((f) =>
@@ -688,13 +720,30 @@ function changerOnglet(onglet) {
 	window.scrollTo({ top: 0 });
 }
 
-function changerFamille(id) {
-	app.familleId = id;
+function enregistrerFamillesActives(ids) {
+	app.famillesActives = new Set(ids);
 	app.personneFamille = null;
 	app.filtreDisponibles = "";
 	app.selection.clear();
-	ecrireStockage(CLES.famille, id);
+	ecrireStockage(CLES.familles, JSON.stringify([...ids]));
 	rendre();
+}
+
+/** Active ou désactive une famille ; la dernière active le reste. */
+function basculerFamille(id) {
+	const actives = new Set(famillesActives().map((f) => f.id));
+	if (actives.has(id)) {
+		if (actives.size === 1) return;
+		actives.delete(id);
+	} else {
+		actives.add(id);
+	}
+	enregistrerFamillesActives(actives);
+}
+
+/** Affiche aussi cette famille (famille rejointe ou créée, liste d'un Secret Santa). */
+function activerFamille(id) {
+	enregistrerFamillesActives(new Set([...famillesActives().map((f) => f.id), id]));
 }
 
 // ---------------------------------------------------------------------------
@@ -840,7 +889,7 @@ async function supprimerEntree(entree) {
 // ---------------------------------------------------------------------------
 
 function voirListe(familleId, personneId) {
-	changerFamille(familleId);
+	activerFamille(familleId);
 	app.personneFamille = personneId;
 	changerOnglet("famille");
 }
@@ -858,18 +907,12 @@ function ajouterLigneExclusion(participants) {
 	$("#secret-santa-exclusions").append(ligne);
 }
 
-function ouvrirFormulaireSecretSanta() {
-	const famille = familleCourante();
-	if (!famille) return;
+/** Participants (tous cochés) et exclusions du formulaire, pour une famille. */
+function remplirParticipants(famille) {
 	const participants = famille.membreIds
 		.map(personne)
 		.filter(Boolean)
 		.sort((a, b) => a.prenom.localeCompare(b.prenom, "fr"));
-	const form = $("#form-secret-santa");
-	form.reset();
-	$("#erreur-secret-santa").textContent = "";
-	$("#aide-secret-santa").textContent = `Famille ${famille.nom}. Pour une autre famille, change de famille en haut de l'écran.`;
-	form.nom.value = `Secret Santa Noël ${new Date().getFullYear()}`;
 	$("#secret-santa-participants").replaceChildren(
 		...participants.map((p) =>
 			el("label", { class: "case-texte" }, el("input", { type: "checkbox", name: "participant", value: p.id, checked: true }), p.prenom),
@@ -878,6 +921,20 @@ function ouvrirFormulaireSecretSanta() {
 	$("#secret-santa-exclusions").replaceChildren();
 	$("#bouton-ajouter-exclusion").onclick = () => ajouterLigneExclusion(participants);
 	app.edition = { familleId: famille.id };
+}
+
+function ouvrirFormulaireSecretSanta() {
+	const familles = famillesActives();
+	if (familles.length === 0) return;
+	const form = $("#form-secret-santa");
+	form.reset();
+	$("#erreur-secret-santa").textContent = "";
+	form.nom.value = `Secret Santa Noël ${new Date().getFullYear()}`;
+	const choix = $("#secret-santa-famille");
+	$("#champ-famille-secret-santa").hidden = familles.length < 2;
+	choix.replaceChildren(...familles.map((f) => el("option", { value: f.id }, f.nom)));
+	choix.onchange = () => remplirParticipants(familles.find((f) => f.id === choix.value));
+	remplirParticipants(familles[0]);
 	$("#dialogue-secret-santa").showModal();
 }
 
@@ -920,7 +977,8 @@ async function supprimerSecretSanta(s) {
 
 /**
  * Ouvre le petit formulaire générique.
- * @param champs [{ nom, libelle, maxlength?, requis? }]
+ * @param champs [{ nom, libelle, maxlength?, requis?, options? }] : avec `options`
+ * ([{ valeur, libelle }]), une liste de choix au lieu d'un texte
  * @param valider (valeurs, afficherErreur) => Promise<boolean> : vrai pour fermer
  */
 function ouvrirDialogueSimple({ titre, aide = "", champs, bouton = "Valider", valider }) {
@@ -932,7 +990,9 @@ function ouvrirDialogueSimple({ titre, aide = "", champs, bouton = "Valider", va
 	$("#simple-champs").replaceChildren(
 		...champs.flatMap((c) => [
 			el("label", { for: `simple-${c.nom}` }, c.libelle),
-			el("input", { id: `simple-${c.nom}`, name: c.nom, type: "text", maxlength: c.maxlength ?? 60, required: c.requis !== false, autocomplete: "off" }),
+			c.options
+				? el("select", { id: `simple-${c.nom}`, name: c.nom }, c.options.map((o) => el("option", { value: o.valeur }, o.libelle)))
+				: el("input", { id: `simple-${c.nom}`, name: c.nom, type: "text", maxlength: c.maxlength ?? 60, required: c.requis !== false, autocomplete: "off" }),
 		]),
 	);
 	const form = $("#form-simple");
@@ -958,7 +1018,7 @@ function ouvrirRejoindre() {
 			const famille = await modifier("rejoindre-famille", { nouveauCode: code }, null, erreur);
 			if (!famille) return false;
 			notifier(`Bienvenue dans la famille ${famille.nom} !`);
-			changerFamille(famille.id);
+			activerFamille(famille.id);
 			return true;
 		},
 	});
@@ -977,25 +1037,26 @@ function ouvrirCreer() {
 			const famille = await modifier("creer-famille", { nom, nouveauCode: code }, null, erreur);
 			if (!famille) return false;
 			notifier(`Famille ${famille.nom} créée.`);
-			changerFamille(famille.id);
+			activerFamille(famille.id);
 			return true;
 		},
 	});
 }
 
 function ouvrirAjoutPersonne() {
-	const famille = familleCourante();
-	if (!famille) return;
+	const familles = famillesActives();
+	if (familles.length === 0) return;
 	ouvrirDialogueSimple({
-		titre: `Ajouter à la famille ${famille.nom}`,
+		titre: familles.length > 1 ? "Ajouter une personne" : `Ajouter à la famille ${familles[0].nom}`,
 		aide: "Pour un proche qui n'utilisera pas l'app (enfant, grands-parents…) : toute la famille pourra tenir sa liste. S'il s'y met plus tard, il choisira son prénom à la connexion.",
 		champs: [
 			{ nom: "prenom", libelle: "Prénom", maxlength: 40 },
 			{ nom: "nom", libelle: "Nom (facultatif)", maxlength: 60, requis: false },
+			...(familles.length > 1 ? [{ nom: "familleId", libelle: "Famille", options: familles.map((f) => ({ valeur: f.id, libelle: f.nom })) }] : []),
 		],
 		bouton: "Ajouter",
-		valider: async ({ prenom, nom }, erreur) => {
-			const ajoutee = await modifier("ajouter-personne", { familleId: famille.id, prenom, nom }, `${prenom.trim()} ajouté(e).`, erreur);
+		valider: async ({ prenom, nom, familleId = familles[0].id }, erreur) => {
+			const ajoutee = await modifier("ajouter-personne", { familleId, prenom, nom }, `${prenom.trim()} ajouté(e).`, erreur);
 			if (!ajoutee) return false;
 			app.personneFamille = ajoutee.id;
 			changerOnglet("famille");
@@ -1073,8 +1134,6 @@ async function connecter(action, parametres) {
 	app.selection.clear();
 	try {
 		appliquerEtat(await appelerApi(action, parametres));
-		const familleDuCode = app.etat.familles.find((f) => f.code.toLowerCase() === app.code.toLowerCase());
-		if (familleDuCode) changerFamille(familleDuCode.id);
 		afficherEcran("app");
 		if (!app.etat.cadeaux.some((c) => c.proprietaireId === moi())) {
 			changerOnglet("ma-liste");
@@ -1213,7 +1272,6 @@ function brancherEvenements() {
 		bouton.addEventListener("click", () => bouton.closest("dialog").close());
 	}
 	$("#bouton-actualiser").addEventListener("click", () => actualiser());
-	$("#choix-famille").addEventListener("change", (e) => changerFamille(e.target.value));
 	$("#bouton-menu").addEventListener("click", (e) => {
 		e.stopPropagation();
 		basculerMenu();

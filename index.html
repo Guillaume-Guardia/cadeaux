@@ -56,8 +56,7 @@
 	<div id="ecran-app" class="app" hidden>
 		<header class="entete">
 			<div class="entete-titre">
-				<label for="choix-famille" class="entete-sur" id="libelle-famille">Cadeaux de Noël</label>
-				<select id="choix-famille" class="choix-famille" hidden></select>
+				<p class="entete-sur" id="libelle-famille">Cadeaux de Noël</p>
 				<h1 id="titre-onglet">Ma liste</h1>
 			</div>
 			<div class="entete-actions">
@@ -184,7 +183,10 @@
 	<dialog id="dialogue-secret-santa" class="dialogue">
 		<form id="form-secret-santa" method="dialog" class="pile">
 			<h2>Organiser un Secret Santa</h2>
-			<p id="aide-secret-santa" class="discret"></p>
+			<div id="champ-famille-secret-santa" class="pile">
+				<label for="secret-santa-famille">Famille</label>
+				<select id="secret-santa-famille"></select>
+			</div>
 			<label for="secret-santa-nom">Nom</label>
 			<input id="secret-santa-nom" name="nom" maxlength="60" required>
 			<label for="secret-santa-budget">Budget par cadeau (€) <span class="discret">(facultatif)</span></label>

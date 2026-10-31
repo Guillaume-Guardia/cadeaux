@@ -191,9 +191,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
 .barre-outils { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .barre-outils select { width: auto; flex: 1; min-width: 140px; }
 
-.puces { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+.puces { display: flex; flex-wrap: wrap; gap: 8px; }
+.puces-familles button { border-radius: 10px; }
 .puces button {
-	flex: none;
 	font: inherit; font-weight: 600;
 	padding: 7px 16px;
 	border-radius: 999px;
@@ -336,21 +336,6 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
 
 /* Familles : sélecteur dans l'en-tête, codes dans le menu */
 .entete-titre { display: flex; flex-direction: column; min-width: 0; }
-.choix-famille {
-	width: auto; max-width: 60vw;
-	padding: 2px 28px 2px 0;
-	border: 0; border-radius: 0;
-	background: transparent;
-	color: inherit;
-	font-size: 0.85rem; font-weight: 600;
-	appearance: none;
-	background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
-	background-position: calc(100% - 12px) 55%, calc(100% - 7px) 55%;
-	background-size: 5px 5px;
-	background-repeat: no-repeat;
-}
-.choix-famille option { color: var(--texte); background: var(--surface); }
-#libelle-famille:has(+ .choix-famille:not([hidden])) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .menu-familles { display: flex; flex-direction: column; border-bottom: 1px solid var(--bord); margin-bottom: 4px; padding-bottom: 4px; }
 .menu-familles:empty { display: none; }
 .menu .menu-code { display: flex; justify-content: space-between; gap: 12px; }
