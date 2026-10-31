@@ -51,12 +51,13 @@ const app = {
 	famillesActives: lireFamillesActives(),
 	horsLigne: false,
 	onglet: lireStockage(CLES.onglet) || "ma-liste",
-	personneFamille: null,
+	/** Personnes sélectionnées dans l'onglet Famille (une ou plusieurs). */
+	personnesFamille: new Set(),
 	filtreDisponibles: "",
 	triDisponibles: "priorite",
 	filtreHistorique: "",
 	selection: new Set(),
-	/** Idée en cours d'édition : { cadeau, pourId }. */
+	/** Idée en cours d'édition : { cadeau, pourIds }. */
 	edition: null,
 	/** Secret Santa dont le membre a affiché le tirage (masqué par défaut). */
 	revele: new Set(),
@@ -265,10 +266,23 @@ function autresDeLaFamille() {
 		.sort((a, b) => a.prenom.localeCompare(b.prenom, "fr"));
 }
 
-/** Même règle que le serveur : ses idées et suggestions, et les listes des proches sans compte. */
+/** « Léa », « Léa et Tom », « Léa, Tom et Zoé ». */
+function prenoms(ids) {
+	const noms = ids.map(prenomDe);
+	return noms.length > 1 ? `${noms.slice(0, -1).join(", ")} et ${noms.at(-1)}` : (noms[0] ?? "");
+}
+
+const estPourMoi = (cadeau) => cadeau.pourIds.includes(moi());
+const offreurs = (cadeau) => cadeau.reserveParIds ?? [];
+
+/**
+ * Même règle que le serveur : ses idées et suggestions, les souhaits communs dont on est
+ * destinataire, et les idées des proches sans compte.
+ */
 function peutModifier(cadeau) {
 	if (cadeau.ajouteParId === moi()) return true;
-	return cadeau.proprietaireId !== moi() && personne(cadeau.proprietaireId)?.compte === false;
+	if (estPourMoi(cadeau)) return cadeau.pourIds.includes(cadeau.ajouteParId);
+	return cadeau.pourIds.every((id) => personne(id)?.compte === false);
 }
 
 function parPriorite(a, b) {
@@ -312,11 +326,21 @@ function carteCadeau(cadeau, { pour, selectionnable = false }) {
 		if (pour === "autre" && peutModifier(cadeau)) {
 			actions.append(el("button", { type: "button", class: "bouton petit", onclick: () => ouvrirFormulaireCadeau(cadeau) }, "Modifier"));
 		}
-		if (cadeau.reserveParId === moi()) {
-			if (pour !== "reservation") etiquette = el("span", { class: "badge moi" }, "Tu l'offres");
-			actions.append(el("button", { type: "button", class: "bouton petit", onclick: () => annuler([cadeau.id], "Réservation annulée.") }, "Annuler"));
-		} else if (cadeau.reserveParId) {
-			etiquette = el("span", { class: "badge pris" }, `Réservé par ${prenomDe(cadeau.reserveParId)}`);
+		const autres = offreurs(cadeau).filter((id) => id !== moi());
+		if (offreurs(cadeau).includes(moi())) {
+			const avec = autres.length ? ` avec ${prenoms(autres)}` : "";
+			if (pour !== "reservation") etiquette = el("span", { class: "badge moi" }, `Tu l'offres${avec}`);
+			else if (autres.length) etiquette = el("span", { class: "badge moi" }, `Avec ${prenoms(autres)}`);
+			actions.append(
+				el(
+					"button",
+					{ type: "button", class: "bouton petit", onclick: () => annuler([cadeau.id], autres.length ? "Tu ne participes plus." : "Réservation annulée.") },
+					autres.length ? "Me retirer" : "Annuler",
+				),
+			);
+		} else if (autres.length) {
+			etiquette = el("span", { class: "badge pris" }, `Réservé par ${prenoms(autres)}`);
+			actions.append(el("button", { type: "button", class: "bouton petit", onclick: () => participer([cadeau.id]) }, "Participer"));
 		} else {
 			etiquette = el("span", { class: "badge libre" }, "Disponible");
 			actions.append(el("button", { type: "button", class: "bouton petit principal", onclick: () => reserver([cadeau.id]) }, "Je l'offre"));
@@ -324,10 +348,22 @@ function carteCadeau(cadeau, { pour, selectionnable = false }) {
 	}
 
 	const suggestion =
-		pour !== "moi" && cadeau.ajouteParId && cadeau.ajouteParId !== cadeau.proprietaireId
+		pour !== "moi" && cadeau.ajouteParId && !cadeau.pourIds.includes(cadeau.ajouteParId)
 			? el("p", { class: "carte-note" }, cadeau.ajouteParId === moi() ? "Ta suggestion" : `Suggéré par ${prenomDe(cadeau.ajouteParId)}`)
 			: null;
-	const libre = pour !== "moi" && !retire && !cadeau.reserveParId;
+	const commun =
+		cadeau.pourIds.length > 1
+			? el(
+					"p",
+					{ class: "carte-note commun" },
+					pour === "moi" ? `Cadeau commun avec ${prenoms(cadeau.pourIds.filter((id) => id !== moi()))}` : `Pour ${prenoms(cadeau.pourIds)}`,
+				)
+			: null;
+	const part =
+		pour === "reservation" && offreurs(cadeau).length > 1 && typeof cadeau.prix === "number"
+			? el("p", { class: "carte-note" }, `Ta part ≈ ${prix(cadeau.prix / offreurs(cadeau).length)}`)
+			: null;
+	const libre = pour !== "moi" && !retire && offreurs(cadeau).length === 0;
 	return el(
 		"article",
 		{ class: `carte${selectionne ? " selectionnee" : ""}${retire ? " retire" : ""}` },
@@ -349,7 +385,9 @@ function carteCadeau(cadeau, { pour, selectionnable = false }) {
 			el("div", { class: "carte-haut" }, el("h3", { class: "carte-titre" }, cadeau.titre), el("span", { class: "carte-prix" }, prix(cadeau.prix))),
 			cadeau.description ? el("p", { class: "carte-description" }, cadeau.description) : null,
 			lienCadeau(cadeau),
+			commun,
 			suggestion,
+			part,
 			el("div", { class: "carte-bas" }, etiquette, actions),
 		),
 	);
@@ -372,8 +410,8 @@ const TITRES = {
 };
 
 function rendreMaListe() {
-	const miens = app.etat.cadeaux.filter((c) => c.proprietaireId === moi()).sort(parPriorite);
-	const ajouter = el("button", { type: "button", class: "bouton principal", onclick: () => ouvrirFormulaireCadeau(null, moi()) }, "+ Ajouter une idée");
+	const miens = app.etat.cadeaux.filter(estPourMoi).sort(parPriorite);
+	const ajouter = el("button", { type: "button", class: "bouton principal", onclick: () => ouvrirFormulaireCadeau(null, [moi()]) }, "+ Ajouter une idée");
 	if (miens.length === 0) {
 		return [vide("Ta liste est vide. Ajoute tes envies : tes familles les verront, sans que tu saches qui offre quoi.", ajouter)];
 	}
@@ -384,13 +422,13 @@ function rendreMaListe() {
 	];
 }
 
-function dejaOffertA(id) {
+function dejaOffertA(id, prenom = null) {
 	const entrees = app.etat.historique.filter((e) => e.destinataires.some((d) => d.id === id));
 	if (entrees.length === 0) return null;
 	return el(
 		"details",
 		{ class: "deja-offert" },
-		el("summary", {}, `Tu lui as déjà offert (${entrees.length})`),
+		el("summary", {}, prenom ? `Déjà offert à ${prenom} (${entrees.length})` : `Tu lui as déjà offert (${entrees.length})`),
 		el(
 			"ul",
 			{},
@@ -409,59 +447,76 @@ function rendreFamille() {
 			),
 		];
 	}
-	if (!autres.some((p) => p.id === app.personneFamille)) app.personneFamille = autres[0].id;
-	const choisie = personne(app.personneFamille);
+	// Une ou plusieurs personnes : leurs listes réunies, et une idée commune possible.
+	const selection = new Set([...app.personnesFamille].filter((id) => autres.some((p) => p.id === id)));
+	if (selection.size === 0) selection.add(autres[0].id);
+	app.personnesFamille = selection;
+	const choisies = autres.filter((p) => selection.has(p.id));
+	const ids = choisies.map((p) => p.id);
+	const basculer = (id) => {
+		if (selection.has(id)) {
+			if (selection.size > 1) selection.delete(id);
+		} else {
+			selection.add(id);
+		}
+		rendre();
+	};
 	const puces = el(
 		"div",
-		{ class: "puces", role: "group", "aria-label": "Personne" },
-		autres.map((p) =>
-			el(
-				"button",
-				{
-					type: "button",
-					"aria-pressed": String(p.id === app.personneFamille),
-					onclick: () => {
-						app.personneFamille = p.id;
-						rendre();
-					},
-				},
-				p.prenom,
-			),
-		),
+		{ class: "puces", role: "group", "aria-label": "Personnes (une ou plusieurs)" },
+		autres.map((p) => el("button", { type: "button", "aria-pressed": String(selection.has(p.id)), onclick: () => basculer(p.id) }, p.prenom)),
 		el("button", { type: "button", class: "puce-ajout", onclick: ouvrirAjoutPersonne, "aria-label": "Ajouter une personne sans compte" }, "+ Personne"),
 	);
-	const sesCadeaux = app.etat.cadeaux
-		.filter((c) => c.proprietaireId === choisie.id && c.statut !== "retiré")
+	const leursCadeaux = app.etat.cadeaux
+		.filter((c) => c.pourIds.some((id) => selection.has(id)) && !estPourMoi(c) && c.statut !== "retiré")
 		.sort(parPriorite);
-	const libres = sesCadeaux.filter((c) => !c.reserveParId).length;
+	const libres = leursCadeaux.filter((c) => offreurs(c).length === 0).length;
+	const seule = choisies.length === 1 ? choisies[0] : null;
+	const avecCompte = choisies.filter((p) => p.compte);
 	const ajouter = el(
 		"button",
-		{ type: "button", class: "bouton", onclick: () => ouvrirFormulaireCadeau(null, choisie.id) },
-		choisie.compte ? `+ Suggérer une idée pour ${choisie.prenom}` : `+ Ajouter une idée pour ${choisie.prenom}`,
+		{ type: "button", class: "bouton", onclick: () => ouvrirFormulaireCadeau(null, ids) },
+		seule
+			? seule.compte
+				? `+ Suggérer une idée pour ${seule.prenom}`
+				: `+ Ajouter une idée pour ${seule.prenom}`
+			: `+ Idée commune pour ${prenoms(ids)}`,
 	);
 	return [
 		puces,
+		choisies.length === 1 ? null : el("p", { class: "discret" }, "Touche un prénom pour l'ajouter ou le retirer : leurs listes sont réunies."),
 		el(
 			"div",
 			{ class: "groupe-titre" },
-			el("h2", {}, choisie.nom ? `${choisie.prenom} ${choisie.nom}` : choisie.prenom),
-			el("span", { class: "discret" }, sesCadeaux.length ? `${libres} disponible(s) sur ${sesCadeaux.length}` : ""),
+			el("h2", {}, seule?.nom ? `${seule.prenom} ${seule.nom}` : prenoms(ids)),
+			el("span", { class: "discret" }, leursCadeaux.length ? `${libres} disponible(s) sur ${leursCadeaux.length}` : ""),
 		),
-		choisie.naissance ? el("p", { class: "anniversaire" }, anniversaire(choisie.naissance)) : null,
-		choisie.compte ? null : el("p", { class: "discret" }, `${choisie.prenom} n'utilise pas l'app : la famille tient sa liste.`),
-		sesCadeaux.length === 0
-			? vide(`${choisie.prenom} n'a encore rien demandé.`)
-			: el("div", { class: "groupe" }, sesCadeaux.map((c) => carteCadeau(c, { pour: "autre", selectionnable: true }))),
-		el("div", { class: "pile" }, ajouter, choisie.compte ? el("p", { class: "discret" }, `${choisie.prenom} ne verra pas tes suggestions.`) : null),
-		dejaOffertA(choisie.id),
+		choisies
+			.filter((p) => p.naissance)
+			.map((p) => el("p", { class: "anniversaire" }, seule ? anniversaire(p.naissance) : `${p.prenom} : ${anniversaire(p.naissance)}`)),
+		choisies
+			.filter((p) => !p.compte)
+			.map((p) => el("p", { class: "discret" }, `${p.prenom} n'utilise pas l'app : la famille tient sa liste.`)),
+		leursCadeaux.length === 0
+			? vide(seule ? `${seule.prenom} n'a encore rien demandé.` : "Rien de demandé pour l'instant.")
+			: el("div", { class: "groupe" }, leursCadeaux.map((c) => carteCadeau(c, { pour: "autre", selectionnable: true }))),
+		el(
+			"div",
+			{ class: "pile" },
+			ajouter,
+			avecCompte.length ? el("p", { class: "discret" }, `${prenoms(avecCompte.map((p) => p.id))} ne ${avecCompte.length > 1 ? "verront" : "verra"} pas tes suggestions.`) : null,
+		),
+		choisies.map((p) => dejaOffertA(p.id, seule ? null : p.prenom)),
 	];
 }
 
 function rendreDisponibles() {
 	const autres = autresDeLaFamille();
 	const ids = new Set(autres.map((p) => p.id));
-	let libres = app.etat.cadeaux.filter((c) => ids.has(c.proprietaireId) && c.statut !== "retiré" && !c.reserveParId);
-	if (app.filtreDisponibles) libres = libres.filter((c) => c.proprietaireId === app.filtreDisponibles);
+	let libres = app.etat.cadeaux.filter(
+		(c) => c.pourIds.some((id) => ids.has(id)) && !estPourMoi(c) && c.statut !== "retiré" && offreurs(c).length === 0,
+	);
+	if (app.filtreDisponibles) libres = libres.filter((c) => c.pourIds.includes(app.filtreDisponibles));
 	const tris = {
 		priorite: parPriorite,
 		"prix-croissant": (a, b) => (a.prix ?? Infinity) - (b.prix ?? Infinity),
@@ -500,17 +555,23 @@ function rendreDisponibles() {
 	);
 	if (libres.length === 0) return [filtres, vide("Plus aucun cadeau disponible ici. Tout est déjà réservé !")];
 
-	const groupes = autres
-		.map((p) => ({ personne: p, cadeaux: libres.filter((c) => c.proprietaireId === p.id) }))
-		.filter((g) => g.cadeaux.length > 0);
+	// Un groupe par destinataire, ou par groupe de destinataires pour un cadeau commun.
+	const groupes = new Map();
+	for (const c of libres) {
+		const cle = [...c.pourIds].sort().join(",");
+		if (!groupes.has(cle)) groupes.set(cle, { titre: `Pour ${prenoms(c.pourIds)}`, cadeaux: [] });
+		groupes.get(cle).cadeaux.push(c);
+	}
 	return [
 		filtres,
 		el("p", { class: "discret" }, "Coche plusieurs cadeaux pour les réserver d'un coup."),
-		groupes.map((g) =>
+		[...groupes.values()]
+			.sort((a, b) => a.titre.localeCompare(b.titre, "fr"))
+			.map((g) =>
 			el(
 				"section",
 				{ class: "groupe" },
-				el("div", { class: "groupe-titre" }, el("h2", {}, `Pour ${g.personne.prenom}`), el("span", { class: "discret" }, `${g.cadeaux.length}`)),
+				el("div", { class: "groupe-titre" }, el("h2", {}, g.titre), el("span", { class: "discret" }, `${g.cadeaux.length}`)),
 				g.cadeaux.map((c) => carteCadeau(c, { pour: "autre", selectionnable: true })),
 			),
 		),
@@ -518,7 +579,7 @@ function rendreDisponibles() {
 }
 
 function carteSecretSanta(s) {
-	const famille = app.etat.familles.find((f) => f.id === s.familleId);
+	const familles = app.etat.familles.filter((f) => s.familleIds.includes(f.id));
 	const organisateur = s.organisateurId === moi();
 	const revele = app.revele.has(s.id);
 	const receveur = s.monReceveurId ? personne(s.monReceveurId) : null;
@@ -543,7 +604,7 @@ function carteSecretSanta(s) {
 				"p",
 				{ class: "carte-description" },
 				[
-					famille ? `Famille ${famille.nom}` : "",
+					familles.length ? `${familles.length > 1 ? "Familles" : "Famille"} ${nomsFamilles(familles)}` : "",
 					`${s.participantIds.length} participants`,
 					organisateur ? "organisé par toi" : `organisé par ${prenomDe(s.organisateurId)}`,
 				]
@@ -563,7 +624,7 @@ function carteSecretSanta(s) {
 				"div",
 				{ class: "carte-actions" },
 				s.monReceveurId && revele && receveur
-					? el("button", { type: "button", class: "bouton petit principal", onclick: () => voirListe(s.familleId, receveur.id) }, "Voir sa liste")
+					? el("button", { type: "button", class: "bouton petit principal", onclick: () => voirListe(s.familleIds, receveur.id) }, "Voir sa liste")
 					: null,
 				organisateur ? el("button", { type: "button", class: "bouton petit", onclick: () => relancerTirage(s) }, "Relancer le tirage") : null,
 				organisateur ? el("button", { type: "button", class: "bouton petit danger", onclick: () => supprimerSecretSanta(s) }, "Supprimer") : null,
@@ -587,7 +648,7 @@ function rendreSecretSantas() {
 }
 
 function rendreReservations() {
-	const miennes = app.etat.cadeaux.filter((c) => c.reserveParId === moi());
+	const miennes = app.etat.cadeaux.filter((c) => offreurs(c).includes(moi()));
 	if (miennes.length === 0) {
 		return [
 			rendreSecretSantas(),
@@ -598,20 +659,23 @@ function rendreReservations() {
 		];
 	}
 	const actifs = miennes.filter((c) => c.statut !== "retiré");
-	const total = actifs.reduce((somme, c) => somme + (c.prix ?? 0), 0);
-	const destinataires = [...new Set(miennes.map((c) => c.proprietaireId))];
+	// Cadeau groupé : seule sa part compte dans le total.
+	const total = actifs.reduce((somme, c) => somme + (c.prix ?? 0) / offreurs(c).length, 0);
+	const groupes = new Map();
+	for (const c of miennes) {
+		const cle = [...c.pourIds].sort().join(",");
+		if (!groupes.has(cle)) groupes.set(cle, { titre: `Pour ${prenoms(c.pourIds)}`, cadeaux: [] });
+		groupes.get(cle).cadeaux.push(c);
+	}
 	return [
 		rendreSecretSantas(),
 		el("div", { class: "total" }, el("span", {}, `${actifs.length} cadeau(x)`), el("span", {}, `≈ ${prix(total)}`)),
-		destinataires.map((id) =>
+		[...groupes.values()].map((g) =>
 			el(
 				"section",
 				{ class: "groupe" },
-				el("div", { class: "groupe-titre" }, el("h2", {}, `Pour ${prenomDe(id)}`)),
-				miennes
-					.filter((c) => c.proprietaireId === id)
-					.sort(parPriorite)
-					.map((c) => carteCadeau(c, { pour: "reservation" })),
+				el("div", { class: "groupe-titre" }, el("h2", {}, g.titre)),
+				g.cadeaux.sort(parPriorite).map((c) => carteCadeau(c, { pour: "reservation" })),
 			),
 		),
 		el("p", { class: "discret" }, "Le 26 décembre, ces cadeaux passent dans ton historique."),
@@ -737,7 +801,7 @@ function rendre() {
 		if (bouton.dataset.onglet === app.onglet) bouton.setAttribute("aria-current", "page");
 		else bouton.removeAttribute("aria-current");
 	}
-	const nbReservations = app.etat.cadeaux.filter((c) => c.reserveParId === moi()).length;
+	const nbReservations = app.etat.cadeaux.filter((c) => offreurs(c).includes(moi())).length;
 	const pastille = $("#compteur-reservations");
 	pastille.hidden = nbReservations === 0;
 	pastille.textContent = String(nbReservations);
@@ -755,7 +819,7 @@ function changerOnglet(onglet) {
 
 function enregistrerFamillesActives(ids) {
 	app.famillesActives = new Set(ids);
-	app.personneFamille = null;
+	app.personnesFamille = new Set();
 	app.filtreDisponibles = "";
 	app.selection.clear();
 	ecrireStockage(CLES.familles, JSON.stringify([...ids]));
@@ -774,9 +838,9 @@ function basculerFamille(id) {
 	enregistrerFamillesActives(actives);
 }
 
-/** Affiche aussi cette famille (famille rejointe ou créée, liste d'un Secret Santa). */
-function activerFamille(id) {
-	enregistrerFamillesActives(new Set([...famillesActives().map((f) => f.id), id]));
+/** Affiche aussi ces familles (famille rejointe ou créée, liste d'un Secret Santa). */
+function activerFamille(...ids) {
+	enregistrerFamillesActives(new Set([...famillesActives().map((f) => f.id), ...ids]));
 }
 
 // ---------------------------------------------------------------------------
@@ -814,6 +878,14 @@ async function reserver(ids) {
 	if (resultat.refuses.length) notifier(messageRefus(resultat), true);
 }
 
+/** Rejoindre ceux qui offrent déjà un cadeau (cadeau groupé). */
+async function participer(ids) {
+	const resultat = await modifier("reserver", { cadeauIds: ids, participer: true });
+	if (!resultat) return;
+	if (resultat.faits.length) notifier("Tu participes à ce cadeau. 🎁");
+	if (resultat.refuses.length) notifier(messageRefus(resultat), true);
+}
+
 async function annuler(ids, message) {
 	const resultat = await modifier("annuler-reservation", { cadeauIds: ids });
 	if (!resultat) return;
@@ -825,19 +897,24 @@ async function annuler(ids, message) {
 // Idées : ajout (pour soi ou pour un proche), modification, suppression
 // ---------------------------------------------------------------------------
 
-function ouvrirFormulaireCadeau(cadeau, pourId = cadeau?.proprietaireId) {
-	app.edition = { cadeau, pourId };
+/** @param pourIds destinataires de l'idée (plusieurs : idée commune) */
+function ouvrirFormulaireCadeau(cadeau, pourIds = cadeau?.pourIds ?? [moi()]) {
+	app.edition = { cadeau, pourIds };
 	const form = $("#form-cadeau");
 	form.reset();
-	const pourMoi = pourId === moi();
-	const destinataire = personne(pourId);
-	$("#titre-dialogue").textContent = cadeau ? "Modifier l'idée" : pourMoi ? "Nouvelle idée" : `Idée pour ${destinataire?.prenom}`;
+	const pourMoi = pourIds.includes(moi());
+	const comptes = pourIds.filter((id) => id !== moi() && personne(id)?.compte);
+	$("#titre-dialogue").textContent = cadeau
+		? "Modifier l'idée"
+		: pourIds.length === 1 && pourMoi
+			? "Nouvelle idée"
+			: `Idée pour ${prenoms(pourIds)}`;
 	$("#aide-dialogue").textContent =
-		pourMoi || !destinataire
+		cadeau || pourMoi
 			? ""
-			: destinataire.compte
-				? `${destinataire.prenom} ne verra pas cette idée ; les autres pourront la réserver.`
-				: `${destinataire.prenom} n'utilise pas l'app : l'idée rejoint sa liste.`;
+			: comptes.length
+				? `${prenoms(comptes)} ne ${comptes.length > 1 ? "verront" : "verra"} pas cette idée ; les autres pourront la réserver.`
+				: "Personne sans compte : l'idée rejoint sa liste.";
 	$("#erreur-cadeau").textContent = "";
 	if (cadeau) {
 		form.titre.value = cadeau.titre;
@@ -860,12 +937,12 @@ async function enregistrerCadeau(evenement) {
 		prix: form.prix.value,
 		priorite: Number(form.priorite.value),
 	};
-	const { cadeau: existant, pourId } = app.edition;
+	const { cadeau: existant, pourIds } = app.edition;
 	$("#erreur-cadeau").textContent = "";
 	const reussi = await modifier(
 		existant ? "modifier-cadeau" : "ajouter-cadeau",
-		existant ? { cadeauId: existant.id, cadeau } : { cadeau, pourId },
-		existant ? "Idée modifiée." : pourId === moi() ? "Idée ajoutée à ta liste." : `Idée ajoutée pour ${prenomDe(pourId)}.`,
+		existant ? { cadeauId: existant.id, cadeau } : { cadeau, pourIds },
+		existant ? "Idée modifiée." : pourIds.length === 1 && pourIds[0] === moi() ? "Idée ajoutée à ta liste." : `Idée ajoutée pour ${prenoms(pourIds)}.`,
 		(message) => {
 			$("#erreur-cadeau").textContent = message;
 		},
@@ -921,9 +998,9 @@ async function supprimerEntree(entree) {
 // Secret Santa
 // ---------------------------------------------------------------------------
 
-function voirListe(familleId, personneId) {
-	activerFamille(familleId);
-	app.personneFamille = personneId;
+function voirListe(familleIds, personneId) {
+	activerFamille(...familleIds);
+	app.personnesFamille = new Set([personneId]);
 	changerOnglet("famille");
 }
 
@@ -940,9 +1017,11 @@ function ajouterLigneExclusion(participants) {
 	$("#secret-santa-exclusions").append(ligne);
 }
 
-/** Participants (tous cochés) et exclusions du formulaire, pour une famille. */
-function remplirParticipants(famille) {
-	const participants = famille.membreIds
+/** Participants (tous cochés) et exclusions du formulaire, pour les familles cochées. */
+function remplirParticipants() {
+	const familleIds = [...document.querySelectorAll("input[name=famille-secret-santa]:checked")].map((c) => c.value);
+	const ids = new Set(app.etat.familles.filter((f) => familleIds.includes(f.id)).flatMap((f) => f.membreIds));
+	const participants = [...ids]
 		.map(personne)
 		.filter(Boolean)
 		.sort((a, b) => a.prenom.localeCompare(b.prenom, "fr"));
@@ -953,21 +1032,30 @@ function remplirParticipants(famille) {
 	);
 	$("#secret-santa-exclusions").replaceChildren();
 	$("#bouton-ajouter-exclusion").onclick = () => ajouterLigneExclusion(participants);
-	app.edition = { familleId: famille.id };
+	app.edition = { familleIds };
 }
 
 function ouvrirFormulaireSecretSanta() {
-	const familles = famillesActives();
+	const { familles } = app.etat;
 	if (familles.length === 0) return;
+	const actives = new Set(famillesActives().map((f) => f.id));
 	const form = $("#form-secret-santa");
 	form.reset();
 	$("#erreur-secret-santa").textContent = "";
 	form.nom.value = `Secret Santa Noël ${new Date().getFullYear()}`;
-	const choix = $("#secret-santa-famille");
+	// Toutes ses familles au choix (les familles affichées cochées) : les participants viennent de chacune.
 	$("#champ-famille-secret-santa").hidden = familles.length < 2;
-	choix.replaceChildren(...familles.map((f) => el("option", { value: f.id }, f.nom)));
-	choix.onchange = () => remplirParticipants(familles.find((f) => f.id === choix.value));
-	remplirParticipants(familles[0]);
+	$("#secret-santa-familles").replaceChildren(
+		...familles.map((f) =>
+			el(
+				"label",
+				{ class: "case-texte" },
+				el("input", { type: "checkbox", name: "famille-secret-santa", value: f.id, checked: actives.has(f.id), onchange: remplirParticipants }),
+				f.nom,
+			),
+		),
+	);
+	remplirParticipants();
 	$("#dialogue-secret-santa").showModal();
 }
 
@@ -975,7 +1063,7 @@ async function enregistrerSecretSanta(evenement) {
 	evenement.preventDefault();
 	const form = evenement.target;
 	const secretSanta = {
-		familleId: app.edition.familleId,
+		familleIds: app.edition.familleIds,
 		nom: form.nom.value,
 		budget: form.budget.value,
 		participantIds: [...form.querySelectorAll("input[name=participant]:checked")].map((c) => c.value),
@@ -983,6 +1071,10 @@ async function enregistrerSecretSanta(evenement) {
 			.map((ligne) => [...ligne.querySelectorAll("select")].map((s) => s.value))
 			.filter(([a, b]) => a !== b),
 	};
+	if (secretSanta.familleIds.length === 0) {
+		$("#erreur-secret-santa").textContent = "Choisis au moins une famille.";
+		return;
+	}
 	if (secretSanta.participantIds.length < 3) {
 		$("#erreur-secret-santa").textContent = "Il faut au moins 3 participants.";
 		return;
@@ -1101,7 +1193,7 @@ function ouvrirAjoutPersonne() {
 		valider: async ({ prenom, nom, naissance, familleId = familles[0].id }, erreur) => {
 			const ajoutee = await modifier("ajouter-personne", { familleId, prenom, nom, naissance }, `${prenom.trim()} ajouté(e).`, erreur);
 			if (!ajoutee) return false;
-			app.personneFamille = ajoutee.id;
+			app.personnesFamille = new Set([ajoutee.id]);
 			changerOnglet("famille");
 			return true;
 		},
@@ -1196,7 +1288,7 @@ async function connecter(action, parametres, bouton = null) {
 	try {
 		appliquerEtat(await appelerApi(action, parametres));
 		afficherEcran("app");
-		if (!app.etat.cadeaux.some((c) => c.proprietaireId === moi())) {
+		if (!app.etat.cadeaux.some(estPourMoi)) {
 			changerOnglet("ma-liste");
 			notifier(`Bienvenue ${app.etat.moi.prenom} ! Commence par ajouter tes idées.`);
 		}

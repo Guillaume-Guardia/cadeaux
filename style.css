@@ -415,3 +415,6 @@ input[type="date"] { min-height: 44px; }
 	animation: chargement 1s ease-in-out infinite;
 }
 @keyframes chargement { from { background-position: -50% 0; } to { background-position: 150% 0; } }
+
+/* Cadeau commun (plusieurs destinataires) */
+.carte-note.commun { color: var(--texte-doux); }

@@ -187,10 +187,10 @@
 	<dialog id="dialogue-secret-santa" class="dialogue">
 		<form id="form-secret-santa" method="dialog" class="pile">
 			<h2>Organiser un Secret Santa</h2>
-			<div id="champ-famille-secret-santa" class="pile">
-				<label for="secret-santa-famille">Famille</label>
-				<select id="secret-santa-famille"></select>
-			</div>
+			<fieldset id="champ-famille-secret-santa" class="destinataires">
+				<legend>Familles</legend>
+				<div id="secret-santa-familles" class="cases"></div>
+			</fieldset>
 			<label for="secret-santa-nom">Nom</label>
 			<input id="secret-santa-nom" name="nom" maxlength="60" required>
 			<label for="secret-santa-budget">Budget par cadeau (€) <span class="discret">(facultatif)</span></label>
