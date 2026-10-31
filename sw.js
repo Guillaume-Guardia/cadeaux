@@ -19,7 +19,10 @@ const FICHIERS = [
 ];
 
 self.addEventListener("install", (evenement) => {
-	evenement.waitUntil(caches.open(VERSION).then((cache) => cache.addAll(FICHIERS)));
+	// cache: "reload" : les fichiers de la nouvelle version, pas ceux du cache HTTP (10 min sur Pages).
+	evenement.waitUntil(
+		caches.open(VERSION).then((cache) => cache.addAll(FICHIERS.map((f) => new Request(f, { cache: "reload" })))),
+	);
 });
 
 self.addEventListener("activate", (evenement) => {

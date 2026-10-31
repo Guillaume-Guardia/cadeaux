@@ -1568,9 +1568,29 @@ async function installer() {
 	}
 }
 
+/** Enregistrement du service worker, pour chercher une mise à jour. */
+let enregistrementSw = null;
+
+/** Menu « Rechercher une mise à jour » (et retour sur l'app) : interroge le serveur sans cache. */
+async function chercherMiseAJour({ silencieux = false } = {}) {
+	fermerMenu();
+	if (!enregistrementSw) return;
+	try {
+		await enregistrementSw.update();
+	} catch {
+		if (!silencieux) notifier("Impossible de vérifier : pas de connexion ?", true);
+		return;
+	}
+	if (silencieux) return;
+	if (enregistrementSw.waiting || enregistrementSw.installing) notifier("Nouvelle version en cours de chargement…");
+	else notifier(`Tu as la dernière version (${window.VERSION_APP}).`);
+}
+
 function enregistrerServiceWorker() {
 	if (!("serviceWorker" in navigator)) return;
-	navigator.serviceWorker.register("sw.js").then((enregistrement) => {
+	// updateViaCache "none" : sw.js et version.js sont relus sans le cache HTTP de Pages.
+	navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((enregistrement) => {
+		enregistrementSw = enregistrement;
 		const proposerMiseAJour = (worker) => {
 			afficherBandeau("maj", "Nouvelle version disponible.", {
 				libelle: "Mettre à jour",
@@ -1635,8 +1655,11 @@ function brancherEvenements() {
 	}
 	// Retour sur l'app (onglet ou téléphone) : les autres ont peut-être réservé entre-temps.
 	document.addEventListener("visibilitychange", () => {
-		if (document.visibilityState === "visible") actualiser({ silencieux: true });
+		if (document.visibilityState !== "visible") return;
+		actualiser({ silencieux: true });
+		chercherMiseAJour({ silencieux: true });
 	});
+	$("#menu-maj").addEventListener("click", () => chercherMiseAJour());
 	window.addEventListener("online", () => actualiser({ silencieux: true }));
 }
 
