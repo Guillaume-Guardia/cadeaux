@@ -343,8 +343,12 @@ function carteCadeau(cadeau, { pour, selectionnable = false }) {
 		etiquette = el("span", { class: "badge pris" }, "Retiré de la liste");
 		actions.append(el("button", { type: "button", class: "bouton petit", onclick: () => annuler([cadeau.id], "Effacé de tes réservations.") }, "Effacer"));
 	} else {
+		// Ses suggestions et les idées des proches sans compte : modifiables et supprimables ici.
 		if (pour === "autre" && peutModifier(cadeau)) {
-			actions.append(el("button", { type: "button", class: "bouton petit", onclick: () => ouvrirFormulaireCadeau(cadeau) }, "Modifier"));
+			actions.append(
+				el("button", { type: "button", class: "bouton petit", onclick: () => ouvrirFormulaireCadeau(cadeau) }, "Modifier"),
+				el("button", { type: "button", class: "bouton petit danger", onclick: () => supprimer(cadeau) }, "Supprimer"),
+			);
 		}
 		const autres = offreurs(cadeau).filter((id) => id !== moi());
 		if (offreurs(cadeau).includes(moi())) {
