@@ -9,7 +9,7 @@ PWA des listes de cadeaux de Noël de la famille : **https://guillaume-guardia.g
 - **J'offre** : ce qu'on offre, à qui, et le total. Un cadeau supprimé après réservation y apparaît « retiré de la liste ». En tête, ses **Secret Santa** : la personne tirée au sort (masquée jusqu'à « Afficher ») et un lien vers sa liste ; « + Organiser » en crée un sur une ou plusieurs de ses familles (participants, budget, exclusions comme un couple).
 - **Historique** : les cadeaux qu'on a offerts, visibles de soi seul. Les réservations y passent chaque 26 décembre ; on peut aussi en ajouter.
 
-Connexion : un **code famille**, puis son prénom (ou s'ajouter, avec son anniversaire si on veut). Le menu (initiale en haut à droite) donne les codes de ses familles, le **profil** (nom, anniversaire, affiché sur sa fiche) et permet de **rejoindre** ou de **créer** une famille. Avec plusieurs familles, des pastilles en haut des onglets Famille et Disponibles choisissent lesquelles afficher, une ou plusieurs à la fois. La version de l'app est affichée en bas du menu et de l'écran de connexion.
+Connexion par **QR code** : « Mon QR code » (menu) sur un appareil connecté, ou le QR d'invitation qu'un proche affiche depuis la fiche d'une personne sans compte. On le scanne avec l'appareil photo ou « Scanner mon QR code » (caméra, dans l'app). Un nouveau venu s'ajoute avec le **code famille** (prénom, anniversaire s'il veut). « Déconnecter mes autres appareils » change le QR code. Le menu (initiale en haut à droite) donne les codes de ses familles, le **profil** (nom, anniversaire, affiché sur sa fiche) et permet de **rejoindre** ou de **créer** une famille. Avec plusieurs familles, des pastilles en haut des onglets Famille et Disponibles choisissent lesquelles afficher, une ou plusieurs à la fois. La version de l'app est affichée en bas du menu et de l'écran de connexion.
 
 L'app s'installe sur le téléphone (Android/ordinateur : menu → Installer l'app ; iPhone : Safari → Partager → Sur l'écran d'accueil). Hors ligne, elle affiche les dernières listes chargées, en lecture seule.
 
@@ -23,6 +23,7 @@ Site statique sans build (HTML, CSS, JavaScript), servi par GitHub Pages depuis 
 | `config.js` | adresse de l'API (`window.API_URL`) |
 | `version.js` | version de l'app (affichée, et nom du cache du service worker) |
 | `manifest.webmanifest`, `icons/` | installation (PWA) |
+| `vendor/` | génération (qrcode-generator, MIT) et lecture (jsQR, Apache-2.0) des QR codes, voir `vendor/LICENCES.md` |
 | `sw.js` | service worker : fichiers en cache pour le hors ligne |
 
 Les données sont dans un Google Sheet, derrière une **Web App Apps Script** : projet `projets/cadeaux` du monorepo privé AppScripts (actions de l'API et règles de visibilité documentées dans son README). L'app l'appelle en `POST` avec un corps JSON en `text/plain`, pour éviter la requête préalable CORS.

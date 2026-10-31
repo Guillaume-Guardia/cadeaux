@@ -5,6 +5,7 @@
 // ---------------------------------------------------------------------------
 
 const CLES = {
+	cle: "cadeaux.cle",
 	code: "cadeaux.code",
 	membre: "cadeaux.membre",
 	etat: "cadeaux.etat",
@@ -42,7 +43,9 @@ function ecrireStockage(cle, valeur) {
 // ---------------------------------------------------------------------------
 
 const app = {
-	/** Code de la famille avec laquelle le membre s'est connecté. */
+	/** Clé de connexion (QR code) : la seule chose qui identifie le membre. */
+	cle: lireStockage(CLES.cle),
+	/** Ancienne connexion (code famille + Id), le temps de recevoir une clé ; ou code d'inscription. */
 	code: lireStockage(CLES.code),
 	membreId: lireStockage(CLES.membre),
 	/** { moi, familles, personnes, cadeaux, historique } renvoyé par l'API. */
@@ -66,7 +69,7 @@ const app = {
 
 try {
 	const etat = JSON.parse(lireStockage(CLES.etat) || "null");
-	if (etat?.moi && etat.moi.id === app.membreId && Array.isArray(etat.secretSantas)) app.etat = etat;
+	if (etat?.moi && (app.cle || etat.moi.id === app.membreId) && Array.isArray(etat.secretSantas)) app.etat = etat;
 } catch {
 	// État en cache illisible : il sera rechargé.
 }
@@ -103,7 +106,12 @@ async function appelerApiSansIndicateur(action, parametres) {
 		reponse = await fetch(window.API_URL, {
 			method: "POST",
 			headers: { "Content-Type": "text/plain;charset=utf-8" },
-			body: JSON.stringify({ action, code: app.code, membreId: app.membreId, ...parametres }),
+			// Avec une clé, elle seule ; sinon l'ancienne connexion, qui en reçoit une (accepteCle).
+			body: JSON.stringify({
+				action,
+				...(app.cle ? { cle: app.cle } : { code: app.code, membreId: app.membreId, accepteCle: true }),
+				...parametres,
+			}),
 		});
 	} catch {
 		throw new ErreurReseau("Pas de connexion. Réessaie quand tu seras en ligne.");
@@ -115,14 +123,25 @@ async function appelerApiSansIndicateur(action, parametres) {
 		throw new ErreurReseau("Le serveur ne répond pas correctement. Réessaie dans un instant.");
 	}
 	if (!donnees.ok) throw new Error(donnees.erreur || "Erreur inconnue.");
+	if (donnees.cle) garderCle(donnees.cle);
 	return donnees.data;
 }
 
+/** Garde la clé de connexion ; l'ancienne connexion (code + Id) ne sert plus. */
+function garderCle(cle) {
+	app.cle = cle;
+	ecrireStockage(CLES.cle, cle);
+	app.code = null;
+	app.membreId = null;
+	ecrireStockage(CLES.code, null);
+	ecrireStockage(CLES.membre, null);
+}
+
+const estConnecte = () => Boolean(app.cle || (app.code && app.membreId));
+
 function appliquerEtat(etat) {
 	app.etat = etat;
-	app.membreId = etat.moi.id;
 	app.horsLigne = false;
-	ecrireStockage(CLES.membre, etat.moi.id);
 	ecrireStockage(CLES.etat, JSON.stringify(etat));
 	const ids = new Set(etat.cadeaux.map((c) => c.id));
 	for (const id of app.selection) if (!ids.has(id)) app.selection.delete(id);
@@ -131,7 +150,7 @@ function appliquerEtat(etat) {
 }
 
 async function actualiser({ silencieux = false } = {}) {
-	if (!app.code || !app.membreId) return;
+	if (!estConnecte()) return;
 	const bouton = $("#bouton-actualiser");
 	bouton.classList.add("tourne");
 	try {
@@ -142,7 +161,7 @@ async function actualiser({ silencieux = false } = {}) {
 			afficherBandeauHorsLigne();
 			rendre();
 			if (!silencieux) notifier(erreur.message, true);
-		} else if (/Code famille|Membre inconnu/.test(erreur.message)) {
+		} else if (/Code famille|Membre inconnu|QR code|Compte introuvable/.test(erreur.message)) {
 			deconnecter(erreur.message);
 		} else {
 			notifier(erreur.message, true);
@@ -507,7 +526,14 @@ function rendreFamille() {
 			.map((p) => el("p", { class: "anniversaire" }, seule ? anniversaire(p.naissance) : `${p.prenom} : ${anniversaire(p.naissance)}`)),
 		choisies
 			.filter((p) => !p.compte)
-			.map((p) => el("p", { class: "discret" }, `${p.prenom} n'utilise pas l'app : la famille tient sa liste.`)),
+			.map((p) =>
+				el(
+					"div",
+					{ class: "sans-compte" },
+					el("p", { class: "discret" }, `${p.prenom} n'utilise pas l'app : la famille tient sa liste.`),
+					el("button", { type: "button", class: "lien-bouton", onclick: () => inviter(p) }, `Inviter ${p.prenom} (QR code)`),
+				),
+			),
 		leursCadeaux.length === 0
 			? vide(seule ? `${seule.prenom} n'a encore rien demandé.` : "Rien de demandé pour l'instant.")
 			: el("div", { class: "groupe" }, leursCadeaux.map((c) => carteCadeau(c, { pour: "autre", selectionnable: true }))),
@@ -564,7 +590,27 @@ function rendreDisponibles() {
 			el("option", { value: "prix-decroissant", selected: app.triDisponibles === "prix-decroissant" }, "Prix décroissant"),
 		),
 	);
-	if (libres.length === 0) return [filtres, vide("Plus aucun cadeau disponible ici. Tout est déjà réservé !")];
+	// Cadeaux réservés par d'autres mais partagés : on peut encore y participer.
+	let aPartager = app.etat.cadeaux.filter(
+		(c) =>
+			c.pourIds.some((id) => ids.has(id)) &&
+			!estPourMoi(c) &&
+			c.statut !== "retiré" &&
+			c.partage &&
+			offreurs(c).length > 0 &&
+			!offreurs(c).includes(moi()),
+	);
+	if (app.filtreDisponibles) aPartager = aPartager.filter((c) => c.pourIds.includes(app.filtreDisponibles));
+	const sectionPartage = aPartager.length
+		? el(
+				"section",
+				{ class: "groupe" },
+				el("div", { class: "groupe-titre" }, el("h2", {}, "À partager"), el("span", { class: "discret" }, `${aPartager.length}`)),
+				el("p", { class: "discret" }, "Déjà réservés, mais ceux qui les offrent acceptent que tu participes."),
+				aPartager.sort(parPriorite).map((c) => carteCadeau(c, { pour: "autre" })),
+			)
+		: null;
+	if (libres.length === 0) return [filtres, sectionPartage ?? vide("Plus aucun cadeau disponible ici. Tout est déjà réservé !")];
 
 	// Un groupe par destinataire, ou par groupe de destinataires pour un cadeau commun.
 	const groupes = new Map();
@@ -576,6 +622,7 @@ function rendreDisponibles() {
 	return [
 		filtres,
 		el("p", { class: "discret" }, "Coche plusieurs cadeaux pour les réserver d'un coup."),
+		sectionPartage,
 		[...groupes.values()]
 			.sort((a, b) => a.titre.localeCompare(b.titre, "fr"))
 			.map((g) =>
@@ -936,6 +983,7 @@ function ouvrirFormulaireCadeau(cadeau, pourIds = cadeau?.pourIds ?? [moi()]) {
 				? `${prenoms(comptes)} ne ${comptes.length > 1 ? "verront" : "verra"} pas cette idée ; les autres pourront la réserver.`
 				: "Personne sans compte : l'idée rejoint sa liste.";
 	$("#erreur-cadeau").textContent = "";
+	$("#bouton-supprimer-cadeau").hidden = !cadeau;
 	if (cadeau) {
 		form.titre.value = cadeau.titre;
 		form.description.value = cadeau.description;
@@ -971,8 +1019,13 @@ async function enregistrerCadeau(evenement) {
 }
 
 async function supprimer(cadeau) {
-	if (!confirm(`Supprimer « ${cadeau.titre} » ?`)) return;
-	await modifier("supprimer-cadeau", { cadeauId: cadeau.id }, "Idée supprimée.");
+	if (!confirm(`Supprimer « ${cadeau.titre} » ?`)) return false;
+	return Boolean(await modifier("supprimer-cadeau", { cadeauId: cadeau.id }, "Idée supprimée."));
+}
+
+async function supprimerDepuisFormulaire() {
+	const { cadeau } = app.edition;
+	if (cadeau && (await supprimer(cadeau))) $("#dialogue-cadeau").close();
 }
 
 // ---------------------------------------------------------------------------
@@ -1245,7 +1298,7 @@ async function copierCode(famille) {
 }
 
 // ---------------------------------------------------------------------------
-// Connexion
+// Connexion : QR code (clé), ou code famille pour un nouveau venu
 // ---------------------------------------------------------------------------
 
 function afficherEcran(nom) {
@@ -1253,32 +1306,14 @@ function afficherEcran(nom) {
 	$("#ecran-app").hidden = nom !== "app";
 }
 
-function afficherChoixMembre({ famille, personnes }) {
-	$("#form-code").hidden = true;
-	$("#choix-membre").hidden = false;
-	$("#titre-choix").textContent = `Famille ${famille.nom} : qui es-tu ?`;
-	const prenoms = personnes.map((p) => p.prenom);
-	$("#liste-membres").replaceChildren(
-		...personnes.map((p) =>
-			el(
-				"button",
-				{ type: "button", class: "bouton", onclick: (e) => connecter("choisir", { personneId: p.id }, e.currentTarget) },
-				// Deux prénoms identiques : le nom les distingue.
-				prenoms.filter((x) => x === p.prenom).length > 1 && p.nom ? `${p.prenom} ${p.nom}` : p.prenom,
-			),
-		),
-	);
-	if (personnes.length === 0) $("#champ-prenom").focus();
-}
-
-function afficherSaisieCode(message = "") {
+function afficherAccueil(message = "") {
 	afficherEcran("connexion");
-	$("#form-code").hidden = false;
+	$("#accueil-connexion").hidden = false;
 	$("#choix-membre").hidden = true;
 	$("#erreur-connexion").textContent = message;
-	$("#champ-code").focus();
 }
 
+/** Code famille d'un nouveau venu : on vérifie le code, puis il s'ajoute. */
 async function validerCode(evenement) {
 	evenement.preventDefault();
 	const bouton = evenement.submitter;
@@ -1287,8 +1322,10 @@ async function validerCode(evenement) {
 	app.code = $("#champ-code").value.trim();
 	try {
 		const famille = await appelerApi("famille");
-		ecrireStockage(CLES.code, app.code);
-		afficherChoixMembre(famille);
+		$("#accueil-connexion").hidden = true;
+		$("#choix-membre").hidden = false;
+		$("#titre-choix").textContent = `Famille ${famille.nom} : ajoute-toi`;
+		$("#champ-prenom").focus();
 	} catch (erreur) {
 		$("#erreur-connexion").textContent = erreur.message;
 	} finally {
@@ -1296,62 +1333,177 @@ async function validerCode(evenement) {
 	}
 }
 
-/** Choisit (« choisir ») ou crée (« ajouter-moi ») le membre, puis ouvre l'app. */
-async function connecter(action, parametres, bouton = null) {
-	$("#erreur-connexion").textContent = "";
-	app.membreId = null;
+/** Ouvre l'app avec l'état reçu (inscription, QR code scanné). */
+function ouvrirApp(etat) {
 	app.selection.clear();
-	const boutons = [...document.querySelectorAll("#choix-membre button")];
-	const libelle = bouton?.textContent;
-	for (const b of boutons) b.disabled = true;
-	if (bouton) bouton.textContent = "Chargement…";
-	try {
-		appliquerEtat(await appelerApi(action, parametres));
-		afficherEcran("app");
-		if (!app.etat.cadeaux.some(estPourMoi)) {
-			changerOnglet("ma-liste");
-			notifier(`Bienvenue ${app.etat.moi.prenom} ! Commence par ajouter tes idées.`);
-		}
-	} catch (erreur) {
-		$("#erreur-connexion").textContent = erreur.message;
-	} finally {
-		for (const b of boutons) b.disabled = false;
-		if (bouton) bouton.textContent = libelle;
+	appliquerEtat(etat);
+	afficherEcran("app");
+	if (!app.etat.cadeaux.some(estPourMoi)) {
+		changerOnglet("ma-liste");
+		notifier(`Bienvenue ${app.etat.moi.prenom} ! Commence par ajouter tes idées.`);
 	}
 }
 
 async function ajouterMoi(evenement) {
 	evenement.preventDefault();
-	await connecter(
-		"ajouter-moi",
-		{ prenom: $("#champ-prenom").value, naissance: $("#champ-naissance").value },
-		evenement.submitter,
+	const bouton = evenement.submitter;
+	if (bouton) bouton.disabled = true;
+	$("#erreur-connexion").textContent = "";
+	try {
+		// La réponse apporte la clé du nouveau membre (gardée par appelerApi).
+		ouvrirApp(await appelerApi("ajouter-moi", { prenom: $("#champ-prenom").value, naissance: $("#champ-naissance").value }));
+	} catch (erreur) {
+		$("#erreur-connexion").textContent = erreur.message;
+	} finally {
+		if (bouton) bouton.disabled = false;
+	}
+}
+
+/** Connexion avec une clé (lien du QR code, ou QR code scanné dans l'app). */
+async function connecterAvecCle(cle) {
+	garderCle(cle);
+	app.etat = null;
+	ecrireStockage(CLES.etat, null);
+	afficherAccueil();
+	$("#erreur-connexion").textContent = "Connexion…";
+	try {
+		ouvrirApp(await appelerApi("etat"));
+	} catch (erreur) {
+		deconnecter(erreur.message);
+	}
+}
+
+/** Clé contenue dans un lien de QR code (…/#cle=…), ou null. */
+function cleDuLien(texte) {
+	const trouve = /[#&]cle=([A-Za-z0-9]+)/.exec(String(texte));
+	return trouve ? trouve[1] : null;
+}
+
+/** Lien à mettre dans un QR code : l'app, avec la clé après « # » (jamais envoyée au serveur web). */
+function lienDeConnexion(cle) {
+	return `${location.origin}${location.pathname}#cle=${cle}`;
+}
+
+function afficherQr(titre, aide, cle) {
+	fermerMenu();
+	const qr = qrcode(0, "M");
+	qr.addData(lienDeConnexion(cle));
+	qr.make();
+	$("#qr-titre").textContent = titre;
+	$("#qr-aide").textContent = aide;
+	$("#qr-image").innerHTML = qr.createSvgTag({ cellSize: 6, margin: 4, scalable: true });
+	$("#dialogue-qr").showModal();
+}
+
+function afficherMonQr() {
+	if (!app.cle) {
+		notifier("Ton QR code arrive au prochain chargement : touche Actualiser.", true);
+		return;
+	}
+	afficherQr(
+		"Mon QR code",
+		"Scanne-le avec ton autre appareil (appareil photo, ou « Scanner mon QR code » dans l'app). Ne le montre à personne d'autre : il ouvre ton compte.",
+		app.cle,
 	);
 }
 
-async function changerDePersonne() {
+async function inviter(personneInvitee) {
+	const cle = await modifier("inviter", { personneId: personneInvitee.id });
+	if (!cle) return;
+	afficherQr(
+		`Inviter ${personneInvitee.prenom}`,
+		`Fais scanner ce QR code à ${personneInvitee.prenom} : il ouvre son compte sur son téléphone. Un nouveau QR code remplace le précédent.`,
+		cle,
+	);
+}
+
+async function revoquer() {
 	fermerMenu();
-	app.membreId = null;
-	app.etat = null;
-	ecrireStockage(CLES.membre, null);
-	ecrireStockage(CLES.etat, null);
-	afficherEcran("connexion");
+	if (!confirm("Déconnecter tous tes autres appareils ? Pour les reconnecter, il faudra scanner ton nouveau QR code.")) return;
+	await modifier("revoquer", {}, "Autres appareils déconnectés. Ton QR code a changé.");
+}
+
+// Lecture d'un QR code : BarcodeDetector quand le navigateur l'a, sinon jsQR (chargé au besoin).
+let scanner = null;
+
+function chargerJsQr() {
+	if (window.jsQR) return Promise.resolve();
+	return new Promise((resolve, reject) => {
+		const script = el("script", { src: "vendor/jsQR.min.js" });
+		script.onload = resolve;
+		script.onerror = () => reject(new Error("Lecteur de QR code indisponible."));
+		document.head.append(script);
+	});
+}
+
+function arreterScanner() {
+	if (scanner) {
+		cancelAnimationFrame(scanner.boucle);
+		for (const piste of scanner.flux.getTracks()) piste.stop();
+		scanner = null;
+	}
+	if ($("#dialogue-scanner").open) $("#dialogue-scanner").close();
+}
+
+async function ouvrirScanner() {
 	$("#erreur-connexion").textContent = "";
+	$("#scanner-message").textContent = "Vise le QR code avec la caméra.";
+	$("#dialogue-scanner").showModal();
 	try {
-		afficherChoixMembre(await appelerApi("famille"));
+		const flux = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+		const video = $("#scanner-video");
+		video.srcObject = flux;
+		await video.play();
+		const detecteur = "BarcodeDetector" in window ? new BarcodeDetector({ formats: ["qr_code"] }) : null;
+		if (!detecteur) await chargerJsQr();
+		const toile = document.createElement("canvas");
+		const contexte = toile.getContext("2d", { willReadFrequently: true });
+		scanner = { flux, boucle: 0 };
+		const lire = async () => {
+			if (!scanner) return;
+			let texte = null;
+			if (video.readyState >= 2) {
+				if (detecteur) {
+					texte = (await detecteur.detect(video))[0]?.rawValue ?? null;
+				} else {
+					toile.width = video.videoWidth;
+					toile.height = video.videoHeight;
+					contexte.drawImage(video, 0, 0);
+					texte = window.jsQR(contexte.getImageData(0, 0, toile.width, toile.height).data, toile.width, toile.height)?.data ?? null;
+				}
+			}
+			const cle = texte ? cleDuLien(texte) : null;
+			if (cle) {
+				arreterScanner();
+				connecterAvecCle(cle);
+			} else {
+				if (texte) $("#scanner-message").textContent = "Ce n'est pas un QR code de l'app Cadeaux.";
+				if (scanner) scanner.boucle = requestAnimationFrame(lire);
+			}
+		};
+		lire();
 	} catch (erreur) {
-		afficherSaisieCode(erreur.message);
+		arreterScanner();
+		$("#erreur-connexion").textContent =
+			erreur?.name === "NotAllowedError" ? "Autorise la caméra pour scanner le QR code." : (erreur?.message ?? "Caméra indisponible.");
 	}
 }
 
 function deconnecter(message = "") {
 	fermerMenu();
+	app.cle = null;
 	app.code = null;
 	app.membreId = null;
 	app.etat = null;
 	for (const cle of Object.values(CLES)) ecrireStockage(cle, null);
 	$("#champ-code").value = "";
-	afficherSaisieCode(message);
+	afficherAccueil(message);
+}
+
+function seDeconnecter() {
+	fermerMenu();
+	if (!confirm("Te déconnecter de cet appareil ? Pour revenir, il faudra scanner ton QR code depuis un autre appareil connecté.")) return;
+	deconnecter();
 }
 
 // ---------------------------------------------------------------------------
@@ -1444,7 +1596,11 @@ function enregistrerServiceWorker() {
 function brancherEvenements() {
 	$("#form-code").addEventListener("submit", validerCode);
 	$("#form-nouveau-membre").addEventListener("submit", ajouterMoi);
-	$("#bouton-autre-code").addEventListener("click", () => deconnecter());
+	$("#bouton-autre-code").addEventListener("click", () => afficherAccueil());
+	$("#bouton-scanner").addEventListener("click", ouvrirScanner);
+	$("#bouton-fermer-scanner").addEventListener("click", arreterScanner);
+	$("#dialogue-scanner").addEventListener("cancel", arreterScanner);
+	$("#bouton-supprimer-cadeau").addEventListener("click", supprimerDepuisFormulaire);
 	$("#form-cadeau").addEventListener("submit", enregistrerCadeau);
 	$("#form-historique").addEventListener("submit", enregistrerHistorique);
 	$("#form-secret-santa").addEventListener("submit", enregistrerSecretSanta);
@@ -1466,8 +1622,9 @@ function brancherEvenements() {
 	$("#menu-rejoindre").addEventListener("click", ouvrirRejoindre);
 	$("#menu-creer").addEventListener("click", ouvrirCreer);
 	$("#menu-installer").addEventListener("click", installer);
-	$("#menu-changer").addEventListener("click", changerDePersonne);
-	$("#menu-deconnecter").addEventListener("click", () => deconnecter());
+	$("#menu-qr").addEventListener("click", afficherMonQr);
+	$("#menu-revoquer").addEventListener("click", revoquer);
+	$("#menu-deconnecter").addEventListener("click", seDeconnecter);
 	$("#bouton-offrir-selection").addEventListener("click", () => reserver([...app.selection]));
 	for (const bouton of document.querySelectorAll(".onglets button")) {
 		bouton.addEventListener("click", () => changerOnglet(bouton.dataset.onglet));
@@ -1487,24 +1644,28 @@ function demarrer() {
 	enregistrerServiceWorker();
 	if (estIos && !estInstallee) $("#menu-installer").hidden = false;
 	if (!window.API_URL) {
-		afficherSaisieCode("L'adresse de l'API n'est pas configurée (config.js).");
+		afficherAccueil("L'adresse de l'API n'est pas configurée (config.js).");
 		return;
 	}
-	if (!app.code) {
-		afficherSaisieCode();
-	} else if (!app.membreId) {
-		afficherEcran("connexion");
-		changerDePersonne();
-	} else {
-		if (app.etat) {
-			afficherEcran("app");
-			rendre();
-		}
-		actualiser({ silencieux: true }).then(() => {
-			if (app.etat) afficherEcran("app");
-			else if (app.code) afficherSaisieCode("Impossible de charger les listes. Vérifie ta connexion.");
-		});
+	// Lien d'un QR code (…/#cle=…) : connexion avec cette clé, retirée aussitôt de l'adresse.
+	const cleLien = cleDuLien(location.hash);
+	if (cleLien) {
+		history.replaceState(null, "", location.pathname);
+		connecterAvecCle(cleLien);
+		return;
 	}
+	if (!estConnecte()) {
+		afficherAccueil();
+		return;
+	}
+	if (app.etat) {
+		afficherEcran("app");
+		rendre();
+	}
+	actualiser({ silencieux: true }).then(() => {
+		if (app.etat) afficherEcran("app");
+		else if (estConnecte()) afficherAccueil("Impossible de charger les listes. Vérifie ta connexion.");
+	});
 }
 
 demarrer();

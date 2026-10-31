@@ -16,6 +16,7 @@
 	<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 	<link rel="stylesheet" href="style.css">
 	<script src="version.js" defer></script>
+	<script src="vendor/qrcode.min.js" defer></script>
 	<script src="config.js" defer></script>
 	<script src="app.js" defer></script>
 </head>
@@ -30,24 +31,28 @@
 			<h1>Cadeaux de Noël</h1>
 			<p class="discret">Les listes de la famille, sans gâcher la surprise.</p>
 
-			<form id="form-code" class="pile">
-				<label for="champ-code">Code famille</label>
-				<input id="champ-code" type="password" autocomplete="current-password" required>
-				<button type="submit" class="bouton principal">Entrer</button>
-			</form>
+			<div id="accueil-connexion" class="pile">
+				<button type="button" id="bouton-scanner" class="bouton principal">Scanner mon QR code</button>
+				<p class="discret">Ton QR code s'affiche sur un appareil déjà connecté (menu « Mon QR code »), ou un proche t'en montre un pour t'inviter.</p>
+				<form id="form-code" class="pile">
+					<p class="sous-titre">Nouveau ? Ajoute-toi avec le code famille</p>
+					<label for="champ-code">Code famille</label>
+					<input id="champ-code" type="password" autocomplete="off" required>
+					<button type="submit" class="bouton">Continuer</button>
+				</form>
+			</div>
 
 			<div id="choix-membre" class="pile" hidden>
-				<h2 id="titre-choix">Qui es-tu ?</h2>
-				<div id="liste-membres" class="liste-membres"></div>
+				<h2 id="titre-choix">Ajoute-toi</h2>
+				<p class="discret">Déjà dans la famille ? Pas besoin de t'ajouter : demande à un proche ton QR code d'invitation.</p>
 				<form id="form-nouveau-membre" class="pile">
-					<p class="sous-titre">Pas dans la liste ? Ajoute-toi</p>
 					<label for="champ-prenom">Prénom</label>
 					<input id="champ-prenom" type="text" maxlength="40" autocomplete="given-name" required>
 					<label for="champ-naissance">Anniversaire <span class="discret">(facultatif)</span></label>
 					<input id="champ-naissance" type="date" autocomplete="bday">
 					<button type="submit" class="bouton">Ajouter</button>
 				</form>
-				<button type="button" id="bouton-autre-code" class="lien-bouton">Changer de code</button>
+				<button type="button" id="bouton-autre-code" class="lien-bouton">Retour</button>
 			</div>
 			<p id="erreur-connexion" class="erreur" role="alert"></p>
 			<p class="version discret"></p>
@@ -70,10 +75,11 @@
 					<p id="menu-nom" class="menu-nom"></p>
 					<div id="menu-familles" class="menu-familles"></div>
 					<button type="button" role="menuitem" id="menu-profil">Mon profil</button>
+					<button type="button" role="menuitem" id="menu-qr">Mon QR code</button>
 					<button type="button" role="menuitem" id="menu-rejoindre">Rejoindre une famille</button>
 					<button type="button" role="menuitem" id="menu-creer">Créer une famille</button>
 					<button type="button" role="menuitem" id="menu-installer" hidden>Installer l'app</button>
-					<button type="button" role="menuitem" id="menu-changer">Changer de personne</button>
+					<button type="button" role="menuitem" id="menu-revoquer">Déconnecter mes autres appareils</button>
 					<button type="button" role="menuitem" id="menu-deconnecter">Se déconnecter</button>
 					<p class="version menu-version"></p>
 				</div>
@@ -140,10 +146,32 @@
 			</div>
 			<p id="erreur-cadeau" class="erreur" role="alert"></p>
 			<div class="ligne fin">
+				<button type="button" id="bouton-supprimer-cadeau" class="bouton danger" hidden>Supprimer</button>
+				<span class="espace"></span>
 				<button type="button" class="bouton" data-fermer>Annuler</button>
 				<button type="submit" class="bouton principal">Enregistrer</button>
 			</div>
 		</form>
+	</dialog>
+
+	<!-- QR code : le sien (autre appareil) ou une invitation -->
+	<dialog id="dialogue-qr" class="dialogue">
+		<form method="dialog" class="pile centre">
+			<h2 id="qr-titre">Mon QR code</h2>
+			<div id="qr-image" class="qr-image"></div>
+			<p id="qr-aide" class="discret"></p>
+			<div class="ligne fin"><button class="bouton principal">Fermer</button></div>
+		</form>
+	</dialog>
+
+	<!-- Lecture d'un QR code avec la caméra -->
+	<dialog id="dialogue-scanner" class="dialogue">
+		<div class="pile centre">
+			<h2>Scanner un QR code</h2>
+			<video id="scanner-video" class="scanner-video" playsinline muted></video>
+			<p id="scanner-message" class="discret">Vise le QR code avec la caméra.</p>
+			<div class="ligne fin"><button type="button" id="bouton-fermer-scanner" class="bouton">Annuler</button></div>
+		</div>
 	</dialog>
 
 	<!-- Formulaire d'un cadeau offert (historique) -->

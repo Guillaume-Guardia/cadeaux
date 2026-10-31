@@ -11,6 +11,7 @@ const FICHIERS = [
 	"app.js",
 	"config.js",
 	"version.js",
+	"vendor/qrcode.min.js",
 	"manifest.webmanifest",
 	"icons/icon.svg",
 	"icons/icon-192.png",
