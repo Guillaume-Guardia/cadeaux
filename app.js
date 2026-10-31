@@ -312,6 +312,7 @@ function carteCadeau(cadeau, { pour, selectionnable = false }) {
 	const selectionne = app.selection.has(cadeau.id);
 	const retire = cadeau.statut === "retiré";
 	const actions = el("div", { class: "carte-actions" });
+	let partage = null;
 	let etiquette = el("span", { class: `badge envie-${cadeau.priorite}` }, ENVIES[cadeau.priorite] ?? "");
 
 	if (pour === "moi") {
@@ -338,9 +339,18 @@ function carteCadeau(cadeau, { pour, selectionnable = false }) {
 					autres.length ? "Me retirer" : "Annuler",
 				),
 			);
+			// Cadeau groupé : d'autres ne peuvent participer que si l'un de ceux qui l'offrent le partage.
+			partage = el(
+				"label",
+				{ class: "case-partage" },
+				el("input", { type: "checkbox", checked: Boolean(cadeau.partage), onchange: (e) => partager(cadeau, e.target.checked) }),
+				"Partager : d'autres peuvent participer",
+			);
 		} else if (autres.length) {
-			etiquette = el("span", { class: "badge pris" }, `Réservé par ${prenoms(autres)}`);
-			actions.append(el("button", { type: "button", class: "bouton petit", onclick: () => participer([cadeau.id]) }, "Participer"));
+			etiquette = el("span", { class: "badge pris" }, `Réservé par ${prenoms(autres)}${cadeau.partage ? " · partagé" : ""}`);
+			if (cadeau.partage) {
+				actions.append(el("button", { type: "button", class: "bouton petit", onclick: () => participer([cadeau.id]) }, "Participer"));
+			}
 		} else {
 			etiquette = el("span", { class: "badge libre" }, "Disponible");
 			actions.append(el("button", { type: "button", class: "bouton petit principal", onclick: () => reserver([cadeau.id]) }, "Je l'offre"));
@@ -389,6 +399,7 @@ function carteCadeau(cadeau, { pour, selectionnable = false }) {
 			suggestion,
 			part,
 			el("div", { class: "carte-bas" }, etiquette, actions),
+			partage,
 		),
 	);
 }
@@ -884,6 +895,15 @@ async function participer(ids) {
 	if (!resultat) return;
 	if (resultat.faits.length) notifier("Tu participes à ce cadeau. 🎁");
 	if (resultat.refuses.length) notifier(messageRefus(resultat), true);
+}
+
+async function partager(cadeau, partage) {
+	const reussi = await modifier(
+		"partager-cadeau",
+		{ cadeauId: cadeau.id, partage },
+		partage ? "Cadeau partagé : d'autres peuvent participer." : "Cadeau plus partagé.",
+	);
+	if (!reussi) rendre();
 }
 
 async function annuler(ids, message) {
