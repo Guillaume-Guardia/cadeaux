@@ -218,14 +218,22 @@ function versChampDate(date) {
 	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-/** « 🎂 20 avril · 34 ans » */
+/**
+ * Prochain anniversaire, avec l'âge que la personne aura ce jour-là (celui qui compte pour le
+ * cadeau) : « 🎂 35 ans le 20 avril », « … (dans 12 jours) », « 🎂 35 ans aujourd'hui ! ».
+ */
 function anniversaire(naissance) {
 	if (!naissance) return null;
 	const date = new Date(naissance);
-	const aujourdhui = new Date();
-	let age = aujourdhui.getFullYear() - date.getFullYear();
-	if (aujourdhui < new Date(aujourdhui.getFullYear(), date.getMonth(), date.getDate())) age--;
-	return `🎂 ${formatAnniversaire.format(date)} · ${age} an${age > 1 ? "s" : ""}`;
+	const maintenant = new Date();
+	const aujourdhui = new Date(maintenant.getFullYear(), maintenant.getMonth(), maintenant.getDate());
+	let prochain = new Date(aujourdhui.getFullYear(), date.getMonth(), date.getDate());
+	if (prochain < aujourdhui) prochain = new Date(aujourdhui.getFullYear() + 1, date.getMonth(), date.getDate());
+	const age = prochain.getFullYear() - date.getFullYear();
+	const ans = `${age} an${age > 1 ? "s" : ""}`;
+	const jours = Math.round((prochain - aujourdhui) / 86400000);
+	if (jours === 0) return `🎂 ${ans} aujourd'hui !`;
+	return `🎂 ${ans} le ${formatAnniversaire.format(prochain)}${jours <= 30 ? ` (dans ${jours} jour${jours > 1 ? "s" : ""})` : ""}`;
 }
 
 function notifier(message, erreur = false) {
@@ -391,28 +399,10 @@ function dejaOffertA(id) {
 	);
 }
 
-/**
- * Pastilles des familles du membre, comme celles des membres (rien s'il n'en a qu'une) : chacune
- * s'active ou se désactive, plusieurs peuvent l'être à la fois.
- */
-function pucesFamilles() {
-	const { familles } = app.etat;
-	if (familles.length < 2) return null;
-	const actives = new Set(famillesActives().map((f) => f.id));
-	return el(
-		"div",
-		{ class: "puces puces-familles", role: "group", "aria-label": "Familles affichées" },
-		familles.map((f) =>
-			el("button", { type: "button", "aria-pressed": String(actives.has(f.id)), onclick: () => basculerFamille(f.id) }, f.nom),
-		),
-	);
-}
-
 function rendreFamille() {
 	const autres = autresDeLaFamille();
 	if (autres.length === 0) {
 		return [
-			pucesFamilles(),
 			vide(
 				`Personne d'autre dans ${nomsFamilles(famillesActives())} pour l'instant. Partage le code (menu en haut à droite), ou ajoute un proche qui n'utilisera pas l'app (enfant, grands-parents…).`,
 				el("button", { type: "button", class: "bouton", onclick: ouvrirAjoutPersonne }, "Ajouter une personne"),
@@ -450,7 +440,6 @@ function rendreFamille() {
 		choisie.compte ? `+ Suggérer une idée pour ${choisie.prenom}` : `+ Ajouter une idée pour ${choisie.prenom}`,
 	);
 	return [
-		pucesFamilles(),
 		puces,
 		el(
 			"div",
@@ -509,13 +498,12 @@ function rendreDisponibles() {
 			el("option", { value: "prix-decroissant", selected: app.triDisponibles === "prix-decroissant" }, "Prix décroissant"),
 		),
 	);
-	if (libres.length === 0) return [pucesFamilles(), filtres, vide("Plus aucun cadeau disponible ici. Tout est déjà réservé !")];
+	if (libres.length === 0) return [filtres, vide("Plus aucun cadeau disponible ici. Tout est déjà réservé !")];
 
 	const groupes = autres
 		.map((p) => ({ personne: p, cadeaux: libres.filter((c) => c.proprietaireId === p.id) }))
 		.filter((g) => g.cadeaux.length > 0);
 	return [
-		pucesFamilles(),
 		filtres,
 		el("p", { class: "discret" }, "Coche plusieurs cadeaux pour les réserver d'un coup."),
 		groupes.map((g) =>
@@ -715,10 +703,20 @@ function rendreEntete() {
 	$("#bouton-menu").textContent = membre.prenom.charAt(0).toUpperCase();
 	$("#menu-nom").textContent = `Connecté en tant que ${membre.prenom}`;
 
-	const actives = famillesActives();
-	$("#libelle-famille").textContent = actives.length
-		? `${actives.length > 1 ? "Familles" : "Famille"} ${nomsFamilles(actives)}`
-		: "Cadeaux de Noël";
+	// Plusieurs familles : des pastilles dans l'en-tête, chacune s'active ou se désactive (plusieurs
+	// à la fois). Une seule : son nom au-dessus du titre.
+	const actives = new Set(famillesActives().map((f) => f.id));
+	const plusieurs = familles.length > 1;
+	$("#libelle-famille").textContent = plusieurs ? "Cadeaux de Noël" : familles[0] ? `Famille ${familles[0].nom}` : "Cadeaux de Noël";
+	const pastilles = $("#familles-entete");
+	pastilles.hidden = !plusieurs;
+	pastilles.replaceChildren(
+		...(plusieurs
+			? familles.map((f) =>
+					el("button", { type: "button", "aria-pressed": String(actives.has(f.id)), onclick: () => basculerFamille(f.id) }, f.nom),
+				)
+			: []),
+	);
 
 	$("#menu-familles").replaceChildren(
 		...familles.map((f) =>

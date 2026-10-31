@@ -163,7 +163,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
 
 .entete {
 	position: sticky; top: 0; z-index: 5;
-	display: flex; justify-content: space-between; align-items: center; gap: 12px;
+	display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px;
 	padding: calc(12px + env(safe-area-inset-top)) 16px 14px;
 	background: var(--entete);
 	color: var(--sur-entete);
@@ -192,7 +192,16 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
 .barre-outils select { width: auto; flex: 1; min-width: 140px; }
 
 .puces { display: flex; flex-wrap: wrap; gap: 8px; }
-.puces-familles button { border-radius: 10px; }
+/* Pastilles des familles, dans l'en-tête rouge */
+.puces-entete { flex-basis: 100%; gap: 6px; }
+.puces.puces-entete button {
+	padding: 4px 12px;
+	font-size: 0.85rem;
+	background: transparent;
+	color: var(--sur-entete);
+	border-color: color-mix(in srgb, var(--sur-entete) 55%, transparent);
+}
+.puces.puces-entete button[aria-pressed="true"] { background: var(--sur-entete); color: var(--entete); border-color: var(--sur-entete); }
 .puces button {
 	font: inherit; font-weight: 600;
 	padding: 7px 16px;
