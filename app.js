@@ -4,7 +4,13 @@
 // Stockage local (préférences de ce navigateur : code, membre, dernier état)
 // ---------------------------------------------------------------------------
 
-const CLES = { code: "cadeaux.code", membre: "cadeaux.membre", etat: "cadeaux.etat", onglet: "cadeaux.onglet" };
+const CLES = {
+	code: "cadeaux.code",
+	membre: "cadeaux.membre",
+	etat: "cadeaux.etat",
+	onglet: "cadeaux.onglet",
+	famille: "cadeaux.famille",
+};
 
 function lireStockage(cle) {
 	try {
@@ -28,23 +34,28 @@ function ecrireStockage(cle, valeur) {
 // ---------------------------------------------------------------------------
 
 const app = {
+	/** Code de la famille avec laquelle le membre s'est connecté. */
 	code: lireStockage(CLES.code),
 	membreId: lireStockage(CLES.membre),
-	/** { moi, membres, cadeaux } renvoyé par l'API. */
+	/** { moi, familles, personnes, cadeaux, historique } renvoyé par l'API. */
 	etat: null,
+	/** Famille affichée (Famille, Disponibles). */
+	familleId: lireStockage(CLES.famille),
 	horsLigne: false,
 	onglet: lireStockage(CLES.onglet) || "ma-liste",
-	membreFamille: null,
+	personneFamille: null,
 	filtreDisponibles: "",
 	triDisponibles: "priorite",
+	filtreHistorique: "",
 	selection: new Set(),
-	cadeauEnEdition: null,
+	/** Idée en cours d'édition : { cadeau, pourId }. */
+	edition: null,
 	occupe: false,
 };
 
 try {
 	const etat = JSON.parse(lireStockage(CLES.etat) || "null");
-	if (etat && etat.moi && etat.moi.id === app.membreId) app.etat = etat;
+	if (etat?.moi && etat.moi.id === app.membreId && Array.isArray(etat.familles)) app.etat = etat;
 } catch {
 	// État en cache illisible : il sera rechargé.
 }
@@ -82,7 +93,9 @@ async function appelerApi(action, parametres = {}) {
 
 function appliquerEtat(etat) {
 	app.etat = etat;
+	app.membreId = etat.moi.id;
 	app.horsLigne = false;
+	ecrireStockage(CLES.membre, etat.moi.id);
 	ecrireStockage(CLES.etat, JSON.stringify(etat));
 	const ids = new Set(etat.cadeaux.map((c) => c.id));
 	for (const id of app.selection) if (!ids.has(id)) app.selection.delete(id);
@@ -115,7 +128,7 @@ async function actualiser({ silencieux = false } = {}) {
 /**
  * Lance une modification ; l'API renvoie { resultat, etat }.
  * @param surErreur affiche l'erreur (par défaut : une notification)
- * @return le résultat, ou null en cas d'échec
+ * @return le résultat (true s'il n'y en a pas), ou null en cas d'échec
  */
 async function modifier(action, parametres, messageSucces, surErreur = (message) => notifier(message, true)) {
 	if (app.occupe) return null;
@@ -168,6 +181,7 @@ function el(balise, attributs = {}, ...enfants) {
 
 const formatEuro = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" });
 const prix = (valeur) => (typeof valeur === "number" ? formatEuro.format(valeur) : "");
+const formatDate = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long", year: "numeric" });
 const ENVIES = { 1: "Très envie", 2: "Envie", 3: "Si possible" };
 
 function notifier(message, erreur = false) {
@@ -176,12 +190,26 @@ function notifier(message, erreur = false) {
 	setTimeout(() => toast.remove(), erreur ? 5000 : 3000);
 }
 
-function prenomDe(id) {
-	return app.etat?.membres.find((m) => m.id === id)?.prenom ?? "quelqu'un";
+const moi = () => app.etat.moi.id;
+const personne = (id) => app.etat?.personnes.find((p) => p.id === id);
+const prenomDe = (id) => (id === app.etat?.moi.id ? "toi" : (personne(id)?.prenom ?? "quelqu'un"));
+
+function familleCourante() {
+	const { familles } = app.etat;
+	return familles.find((f) => f.id === app.familleId) ?? familles[0] ?? null;
 }
 
-function autresMembres() {
-	return app.etat.membres.filter((m) => m.id !== app.etat.moi.id);
+/** Personnes de la famille affichée, sans le membre connecté. */
+function autresDeLaFamille() {
+	const famille = familleCourante();
+	if (!famille) return [];
+	return famille.membreIds.filter((id) => id !== moi()).map(personne).filter(Boolean);
+}
+
+/** Même règle que le serveur : ses idées et suggestions, et les listes des proches sans compte. */
+function peutModifier(cadeau) {
+	if (cadeau.ajouteParId === moi()) return true;
+	return cadeau.proprietaireId !== moi() && personne(cadeau.proprietaireId)?.compte === false;
 }
 
 function parPriorite(a, b) {
@@ -215,22 +243,31 @@ function carteCadeau(cadeau, { pour, selectionnable = false }) {
 
 	if (pour === "moi") {
 		actions.append(
-			el("button", { type: "button", class: "bouton petit", onclick: () => ouvrirFormulaire(cadeau) }, "Modifier"),
+			el("button", { type: "button", class: "bouton petit", onclick: () => ouvrirFormulaireCadeau(cadeau) }, "Modifier"),
 			el("button", { type: "button", class: "bouton petit danger", onclick: () => supprimer(cadeau) }, "Supprimer"),
 		);
 	} else if (retire) {
-		etiquette = el("span", { class: "badge pris" }, `Retiré de la liste par ${prenomDe(cadeau.proprietaireId)}`);
+		etiquette = el("span", { class: "badge pris" }, "Retiré de la liste");
 		actions.append(el("button", { type: "button", class: "bouton petit", onclick: () => annuler([cadeau.id], "Effacé de tes réservations.") }, "Effacer"));
-	} else if (cadeau.reserveParId === app.etat.moi.id) {
-		if (pour !== "reservation") etiquette = el("span", { class: "badge moi" }, "Tu l'offres");
-		actions.append(el("button", { type: "button", class: "bouton petit", onclick: () => annuler([cadeau.id], "Réservation annulée.") }, "Annuler"));
-	} else if (cadeau.reserveParId) {
-		etiquette = el("span", { class: "badge pris" }, `Réservé par ${prenomDe(cadeau.reserveParId)}`);
 	} else {
-		etiquette = el("span", { class: "badge libre" }, "Disponible");
-		actions.append(el("button", { type: "button", class: "bouton petit principal", onclick: () => reserver([cadeau.id]) }, "Je l'offre"));
+		if (pour === "autre" && peutModifier(cadeau)) {
+			actions.append(el("button", { type: "button", class: "bouton petit", onclick: () => ouvrirFormulaireCadeau(cadeau) }, "Modifier"));
+		}
+		if (cadeau.reserveParId === moi()) {
+			if (pour !== "reservation") etiquette = el("span", { class: "badge moi" }, "Tu l'offres");
+			actions.append(el("button", { type: "button", class: "bouton petit", onclick: () => annuler([cadeau.id], "Réservation annulée.") }, "Annuler"));
+		} else if (cadeau.reserveParId) {
+			etiquette = el("span", { class: "badge pris" }, `Réservé par ${prenomDe(cadeau.reserveParId)}`);
+		} else {
+			etiquette = el("span", { class: "badge libre" }, "Disponible");
+			actions.append(el("button", { type: "button", class: "bouton petit principal", onclick: () => reserver([cadeau.id]) }, "Je l'offre"));
+		}
 	}
 
+	const suggestion =
+		pour !== "moi" && cadeau.ajouteParId && cadeau.ajouteParId !== cadeau.proprietaireId
+			? el("p", { class: "carte-note" }, cadeau.ajouteParId === moi() ? "Ta suggestion" : `Suggéré par ${prenomDe(cadeau.ajouteParId)}`)
+			: null;
 	const libre = pour !== "moi" && !retire && !cadeau.reserveParId;
 	return el(
 		"article",
@@ -253,6 +290,7 @@ function carteCadeau(cadeau, { pour, selectionnable = false }) {
 			el("div", { class: "carte-haut" }, el("h3", { class: "carte-titre" }, cadeau.titre), el("span", { class: "carte-prix" }, prix(cadeau.prix))),
 			cadeau.description ? el("p", { class: "carte-description" }, cadeau.description) : null,
 			lienCadeau(cadeau),
+			suggestion,
 			el("div", { class: "carte-bas" }, etiquette, actions),
 		),
 	);
@@ -266,65 +304,103 @@ function vide(message, ...enfants) {
 // Onglets
 // ---------------------------------------------------------------------------
 
-const TITRES = { "ma-liste": "Ma liste", famille: "La famille", disponibles: "Disponibles", reservations: "Ce que j'offre" };
+const TITRES = {
+	"ma-liste": "Ma liste",
+	famille: "La famille",
+	disponibles: "Disponibles",
+	reservations: "Ce que j'offre",
+	historique: "Déjà offert",
+};
 
 function rendreMaListe() {
-	const miens = app.etat.cadeaux.filter((c) => c.proprietaireId === app.etat.moi.id).sort(parPriorite);
-	const ajouter = el("button", { type: "button", class: "bouton principal", onclick: () => ouvrirFormulaire(null) }, "+ Ajouter une idée");
+	const miens = app.etat.cadeaux.filter((c) => c.proprietaireId === moi()).sort(parPriorite);
+	const ajouter = el("button", { type: "button", class: "bouton principal", onclick: () => ouvrirFormulaireCadeau(null, moi()) }, "+ Ajouter une idée");
 	if (miens.length === 0) {
-		return [vide("Ta liste est vide. Ajoute tes envies : la famille les verra, sans que tu saches qui offre quoi.", ajouter)];
+		return [vide("Ta liste est vide. Ajoute tes envies : tes familles les verront, sans que tu saches qui offre quoi.", ajouter)];
 	}
 	return [
-		el("div", { class: "barre-outils" }, el("p", { class: "discret" }, `${miens.length} idée(s). Tu ne vois pas ce qui est réservé : surprise !`)),
+		el("p", { class: "discret" }, `${miens.length} idée(s). Tu ne vois ni ce qui est réservé, ni ce que les autres te suggèrent : surprise !`),
 		...miens.map((c) => carteCadeau(c, { pour: "moi" })),
 		el("div", {}, ajouter),
 	];
 }
 
+function dejaOffertA(id) {
+	const entrees = app.etat.historique.filter((e) => e.destinataires.some((d) => d.id === id));
+	if (entrees.length === 0) return null;
+	return el(
+		"details",
+		{ class: "deja-offert" },
+		el("summary", {}, `Tu lui as déjà offert (${entrees.length})`),
+		el(
+			"ul",
+			{},
+			entrees.map((e) => el("li", {}, el("span", { class: "discret" }, `${e.date ? new Date(e.date).getFullYear() : "?"} · ${e.occasion}`), " ", e.details)),
+		),
+	);
+}
+
 function rendreFamille() {
-	const autres = autresMembres();
-	if (autres.length === 0) return [vide("Personne d'autre pour l'instant. Partage le lien et le code famille !")];
-	if (!autres.some((m) => m.id === app.membreFamille)) app.membreFamille = autres[0].id;
+	const autres = autresDeLaFamille();
+	if (autres.length === 0) {
+		return [
+			vide(
+				`Personne d'autre dans la famille ${familleCourante()?.nom ?? ""} pour l'instant. Partage le code (menu en haut à droite), ou ajoute un proche qui n'utilisera pas l'app (enfant, grands-parents…).`,
+				el("button", { type: "button", class: "bouton", onclick: ouvrirAjoutPersonne }, "Ajouter une personne"),
+			),
+		];
+	}
+	if (!autres.some((p) => p.id === app.personneFamille)) app.personneFamille = autres[0].id;
+	const choisie = personne(app.personneFamille);
 	const puces = el(
 		"div",
-		{ class: "puces", role: "group", "aria-label": "Membre" },
-		autres.map((m) =>
+		{ class: "puces", role: "group", "aria-label": "Personne" },
+		autres.map((p) =>
 			el(
 				"button",
 				{
 					type: "button",
-					"aria-pressed": String(m.id === app.membreFamille),
+					"aria-pressed": String(p.id === app.personneFamille),
 					onclick: () => {
-						app.membreFamille = m.id;
+						app.personneFamille = p.id;
 						rendre();
 					},
 				},
-				m.prenom,
+				p.prenom,
 			),
 		),
+		el("button", { type: "button", class: "puce-ajout", onclick: ouvrirAjoutPersonne, "aria-label": "Ajouter une personne sans compte" }, "+ Personne"),
 	);
 	const sesCadeaux = app.etat.cadeaux
-		.filter((c) => c.proprietaireId === app.membreFamille && c.statut !== "retiré")
+		.filter((c) => c.proprietaireId === choisie.id && c.statut !== "retiré")
 		.sort(parPriorite);
 	const libres = sesCadeaux.filter((c) => !c.reserveParId).length;
+	const ajouter = el(
+		"button",
+		{ type: "button", class: "bouton", onclick: () => ouvrirFormulaireCadeau(null, choisie.id) },
+		choisie.compte ? `+ Suggérer une idée pour ${choisie.prenom}` : `+ Ajouter une idée pour ${choisie.prenom}`,
+	);
 	return [
 		puces,
+		el(
+			"div",
+			{ class: "groupe-titre" },
+			el("h2", {}, choisie.nom ? `${choisie.prenom} ${choisie.nom}` : choisie.prenom),
+			el("span", { class: "discret" }, sesCadeaux.length ? `${libres} disponible(s) sur ${sesCadeaux.length}` : ""),
+		),
+		choisie.compte ? null : el("p", { class: "discret" }, `${choisie.prenom} n'utilise pas l'app : la famille tient sa liste.`),
 		sesCadeaux.length === 0
-			? vide(`${prenomDe(app.membreFamille)} n'a encore rien demandé.`)
-			: el(
-					"div",
-					{ class: "groupe" },
-					el("p", { class: "discret" }, `${sesCadeaux.length} idée(s), ${libres} disponible(s)`),
-					sesCadeaux.map((c) => carteCadeau(c, { pour: "autre", selectionnable: true })),
-				),
+			? vide(`${choisie.prenom} n'a encore rien demandé.`)
+			: el("div", { class: "groupe" }, sesCadeaux.map((c) => carteCadeau(c, { pour: "autre", selectionnable: true }))),
+		el("div", { class: "pile" }, ajouter, choisie.compte ? el("p", { class: "discret" }, `${choisie.prenom} ne verra pas tes suggestions.`) : null),
+		dejaOffertA(choisie.id),
 	];
 }
 
 function rendreDisponibles() {
-	const autres = autresMembres();
-	let libres = app.etat.cadeaux.filter(
-		(c) => c.proprietaireId !== app.etat.moi.id && c.statut !== "retiré" && !c.reserveParId,
-	);
+	const autres = autresDeLaFamille();
+	const ids = new Set(autres.map((p) => p.id));
+	let libres = app.etat.cadeaux.filter((c) => ids.has(c.proprietaireId) && c.statut !== "retiré" && !c.reserveParId);
 	if (app.filtreDisponibles) libres = libres.filter((c) => c.proprietaireId === app.filtreDisponibles);
 	const tris = {
 		priorite: parPriorite,
@@ -346,7 +422,7 @@ function rendreDisponibles() {
 				},
 			},
 			el("option", { value: "" }, "Tout le monde"),
-			autres.map((m) => el("option", { value: m.id, selected: m.id === app.filtreDisponibles }, `Pour ${m.prenom}`)),
+			autres.map((p) => el("option", { value: p.id, selected: p.id === app.filtreDisponibles }, `Pour ${p.prenom}`)),
 		),
 		el(
 			"select",
@@ -365,7 +441,7 @@ function rendreDisponibles() {
 	if (libres.length === 0) return [filtres, vide("Plus aucun cadeau disponible ici. Tout est déjà réservé !")];
 
 	const groupes = autres
-		.map((m) => ({ membre: m, cadeaux: libres.filter((c) => c.proprietaireId === m.id) }))
+		.map((p) => ({ personne: p, cadeaux: libres.filter((c) => c.proprietaireId === p.id) }))
 		.filter((g) => g.cadeaux.length > 0);
 	return [
 		filtres,
@@ -374,7 +450,7 @@ function rendreDisponibles() {
 			el(
 				"section",
 				{ class: "groupe" },
-				el("div", { class: "groupe-titre" }, el("h2", {}, `Pour ${g.membre.prenom}`), el("span", { class: "discret" }, `${g.cadeaux.length}`)),
+				el("div", { class: "groupe-titre" }, el("h2", {}, `Pour ${g.personne.prenom}`), el("span", { class: "discret" }, `${g.cadeaux.length}`)),
 				g.cadeaux.map((c) => carteCadeau(c, { pour: "autre", selectionnable: true })),
 			),
 		),
@@ -382,7 +458,7 @@ function rendreDisponibles() {
 }
 
 function rendreReservations() {
-	const miennes = app.etat.cadeaux.filter((c) => c.reserveParId === app.etat.moi.id);
+	const miennes = app.etat.cadeaux.filter((c) => c.reserveParId === moi());
 	if (miennes.length === 0) {
 		return [
 			vide(
@@ -407,27 +483,128 @@ function rendreReservations() {
 					.map((c) => carteCadeau(c, { pour: "reservation" })),
 			),
 		),
+		el("p", { class: "discret" }, "Le 26 décembre, ces cadeaux passent dans ton historique."),
 	];
 }
 
-const RENDUS = { "ma-liste": rendreMaListe, famille: rendreFamille, disponibles: rendreDisponibles, reservations: rendreReservations };
+function rendreHistorique() {
+	const ajouter = el("button", { type: "button", class: "bouton principal", onclick: ouvrirFormulaireHistorique }, "+ Ajouter");
+	const toutes = app.etat.historique;
+	if (toutes.length === 0) {
+		return [vide("Ton historique est vide. Les cadeaux que tu offres y arrivent chaque 26 décembre ; tu peux aussi en ajouter.", ajouter)];
+	}
+	const cle = (d) => d.id ?? `texte:${d.nom}`;
+	const destinataires = new Map();
+	for (const e of toutes) for (const d of e.destinataires) destinataires.set(cle(d), d.nom);
+	const entrees = app.filtreHistorique ? toutes.filter((e) => e.destinataires.some((d) => cle(d) === app.filtreHistorique)) : toutes;
+	const annees = new Map();
+	for (const e of entrees) {
+		const annee = e.date ? String(new Date(e.date).getFullYear()) : "Sans date";
+		if (!annees.has(annee)) annees.set(annee, []);
+		annees.get(annee).push(e);
+	}
+	return [
+		el(
+			"div",
+			{ class: "barre-outils" },
+			el(
+				"select",
+				{
+					"aria-label": "Pour qui",
+					onchange: (e) => {
+						app.filtreHistorique = e.target.value;
+						rendre();
+					},
+				},
+				el("option", { value: "" }, "Tout le monde"),
+				[...destinataires]
+					.sort((a, b) => a[1].localeCompare(b[1], "fr"))
+					.map(([valeur, nom]) => el("option", { value: valeur, selected: valeur === app.filtreHistorique }, `Pour ${nom}`)),
+			),
+			ajouter,
+		),
+		el("p", { class: "discret" }, "Visible de toi seul."),
+		[...annees].map(([annee, liste]) =>
+			el(
+				"section",
+				{ class: "groupe" },
+				el("div", { class: "groupe-titre" }, el("h2", {}, annee), el("span", { class: "discret" }, `${liste.length}`)),
+				liste.map((e) =>
+					el(
+						"article",
+						{ class: "carte compacte" },
+						el(
+							"div",
+							{ class: "carte-corps" },
+							el("div", { class: "carte-haut" }, el("h3", { class: "carte-titre" }, e.details), el("span", { class: "carte-prix" }, prix(e.prix))),
+							el(
+								"p",
+								{ class: "carte-description" },
+								[
+									e.occasion,
+									`pour ${e.destinataires.map((d) => d.nom).join(", ")}`,
+									e.avec.length ? `avec ${e.avec.join(", ")}` : "",
+									e.date ? formatDate.format(new Date(e.date)) : "",
+								]
+									.filter(Boolean)
+									.join(" · "),
+							),
+						),
+						el("button", { type: "button", class: "icone-supprimer", "aria-label": `Supprimer ${e.details}`, onclick: () => supprimerEntree(e) }, "×"),
+					),
+				),
+			),
+		),
+	];
+}
+
+const RENDUS = {
+	"ma-liste": rendreMaListe,
+	famille: rendreFamille,
+	disponibles: rendreDisponibles,
+	reservations: rendreReservations,
+	historique: rendreHistorique,
+};
+
+function rendreEntete() {
+	const { moi: membre, familles } = app.etat;
+	$("#titre-onglet").textContent = TITRES[app.onglet];
+	$("#bouton-menu").textContent = membre.prenom.charAt(0).toUpperCase();
+	$("#menu-nom").textContent = `Connecté en tant que ${membre.prenom}`;
+
+	const choix = $("#choix-famille");
+	const plusieurs = familles.length > 1;
+	choix.hidden = !plusieurs;
+	$("#libelle-famille").textContent = plusieurs ? "Famille" : familles[0] ? `Famille ${familles[0].nom}` : "Cadeaux de Noël";
+	if (plusieurs) {
+		choix.replaceChildren(...familles.map((f) => el("option", { value: f.id, selected: f.id === familleCourante()?.id }, f.nom)));
+	}
+
+	$("#menu-familles").replaceChildren(
+		...familles.map((f) =>
+			el(
+				"button",
+				{ type: "button", role: "menuitem", class: "menu-code", onclick: () => copierCode(f) },
+				el("span", {}, `Code ${f.nom}`),
+				el("strong", {}, f.code),
+			),
+		),
+	);
+}
 
 function rendre() {
 	if (!app.etat) return;
-	const { moi } = app.etat;
-	$("#titre-onglet").textContent = TITRES[app.onglet];
-	$("#bouton-menu").textContent = moi.prenom.charAt(0).toUpperCase();
-	$("#menu-nom").textContent = `Connecté en tant que ${moi.prenom}`;
+	rendreEntete();
 	for (const bouton of document.querySelectorAll(".onglets button")) {
 		if (bouton.dataset.onglet === app.onglet) bouton.setAttribute("aria-current", "page");
 		else bouton.removeAttribute("aria-current");
 	}
-	const nbReservations = app.etat.cadeaux.filter((c) => c.reserveParId === moi.id).length;
+	const nbReservations = app.etat.cadeaux.filter((c) => c.reserveParId === moi()).length;
 	const pastille = $("#compteur-reservations");
 	pastille.hidden = nbReservations === 0;
 	pastille.textContent = String(nbReservations);
 
-	$("#contenu").replaceChildren(...RENDUS[app.onglet]().flat());
+	$("#contenu").replaceChildren(...RENDUS[app.onglet]().flat().filter(Boolean));
 	rendreSelection();
 }
 
@@ -436,6 +613,15 @@ function changerOnglet(onglet) {
 	ecrireStockage(CLES.onglet, onglet);
 	rendre();
 	window.scrollTo({ top: 0 });
+}
+
+function changerFamille(id) {
+	app.familleId = id;
+	app.personneFamille = null;
+	app.filtreDisponibles = "";
+	app.selection.clear();
+	ecrireStockage(CLES.famille, id);
+	rendre();
 }
 
 // ---------------------------------------------------------------------------
@@ -481,14 +667,22 @@ async function annuler(ids, message) {
 }
 
 // ---------------------------------------------------------------------------
-// Ma liste : ajout, modification, suppression
+// Idées : ajout (pour soi ou pour un proche), modification, suppression
 // ---------------------------------------------------------------------------
 
-function ouvrirFormulaire(cadeau) {
-	app.cadeauEnEdition = cadeau;
+function ouvrirFormulaireCadeau(cadeau, pourId = cadeau?.proprietaireId) {
+	app.edition = { cadeau, pourId };
 	const form = $("#form-cadeau");
 	form.reset();
-	$("#titre-dialogue").textContent = cadeau ? "Modifier l'idée" : "Nouvelle idée";
+	const pourMoi = pourId === moi();
+	const destinataire = personne(pourId);
+	$("#titre-dialogue").textContent = cadeau ? "Modifier l'idée" : pourMoi ? "Nouvelle idée" : `Idée pour ${destinataire?.prenom}`;
+	$("#aide-dialogue").textContent =
+		pourMoi || !destinataire
+			? ""
+			: destinataire.compte
+				? `${destinataire.prenom} ne verra pas cette idée ; les autres pourront la réserver.`
+				: `${destinataire.prenom} n'utilise pas l'app : l'idée rejoint sa liste.`;
 	$("#erreur-cadeau").textContent = "";
 	if (cadeau) {
 		form.titre.value = cadeau.titre;
@@ -511,12 +705,12 @@ async function enregistrerCadeau(evenement) {
 		prix: form.prix.value,
 		priorite: Number(form.priorite.value),
 	};
-	const enEdition = app.cadeauEnEdition;
+	const { cadeau: existant, pourId } = app.edition;
 	$("#erreur-cadeau").textContent = "";
 	const reussi = await modifier(
-		enEdition ? "modifier-cadeau" : "ajouter-cadeau",
-		enEdition ? { cadeauId: enEdition.id, cadeau } : { cadeau },
-		enEdition ? "Idée modifiée." : "Idée ajoutée à ta liste.",
+		existant ? "modifier-cadeau" : "ajouter-cadeau",
+		existant ? { cadeauId: existant.id, cadeau } : { cadeau, pourId },
+		existant ? "Idée modifiée." : pourId === moi() ? "Idée ajoutée à ta liste." : `Idée ajoutée pour ${prenomDe(pourId)}.`,
 		(message) => {
 			$("#erreur-cadeau").textContent = message;
 		},
@@ -525,8 +719,147 @@ async function enregistrerCadeau(evenement) {
 }
 
 async function supprimer(cadeau) {
-	if (!confirm(`Supprimer « ${cadeau.titre} » de ta liste ?`)) return;
+	if (!confirm(`Supprimer « ${cadeau.titre} » ?`)) return;
 	await modifier("supprimer-cadeau", { cadeauId: cadeau.id }, "Idée supprimée.");
+}
+
+// ---------------------------------------------------------------------------
+// Historique
+// ---------------------------------------------------------------------------
+
+function ouvrirFormulaireHistorique() {
+	const form = $("#form-historique");
+	form.reset();
+	$("#erreur-historique").textContent = "";
+	form.date.value = new Date().toISOString().slice(0, 10);
+	const proches = app.etat.personnes.filter((p) => p.id !== moi()).sort((a, b) => a.prenom.localeCompare(b.prenom, "fr"));
+	$("#historique-personnes").replaceChildren(
+		...proches.map((p) => el("label", { class: "case-texte" }, el("input", { type: "checkbox", name: "destinataire", value: p.id }), p.prenom)),
+	);
+	$("#dialogue-historique").showModal();
+	form.details.focus();
+}
+
+async function enregistrerHistorique(evenement) {
+	evenement.preventDefault();
+	const form = evenement.target;
+	const entree = {
+		details: form.details.value,
+		date: form.date.value,
+		occasion: form.occasion.value,
+		destinataireIds: [...form.querySelectorAll("input[name=destinataire]:checked")].map((c) => c.value),
+		autresDestinataires: form.autres.value,
+		prix: form.prix.value,
+	};
+	const reussi = await modifier("ajouter-historique", { entree }, "Ajouté à ton historique.", (message) => {
+		$("#erreur-historique").textContent = message;
+	});
+	if (reussi) $("#dialogue-historique").close();
+}
+
+async function supprimerEntree(entree) {
+	if (!confirm(`Retirer « ${entree.details} » de ton historique ?`)) return;
+	await modifier("supprimer-historique", { entreeId: entree.id }, "Retiré de ton historique.");
+}
+
+// ---------------------------------------------------------------------------
+// Familles : rejoindre, créer, ajouter une personne sans compte
+// ---------------------------------------------------------------------------
+
+/**
+ * Ouvre le petit formulaire générique.
+ * @param champs [{ nom, libelle, maxlength?, requis? }]
+ * @param valider (valeurs, afficherErreur) => Promise<boolean> : vrai pour fermer
+ */
+function ouvrirDialogueSimple({ titre, aide = "", champs, bouton = "Valider", valider }) {
+	fermerMenu();
+	$("#simple-titre").textContent = titre;
+	$("#simple-aide").textContent = aide;
+	$("#simple-valider").textContent = bouton;
+	$("#erreur-simple").textContent = "";
+	$("#simple-champs").replaceChildren(
+		...champs.flatMap((c) => [
+			el("label", { for: `simple-${c.nom}` }, c.libelle),
+			el("input", { id: `simple-${c.nom}`, name: c.nom, type: "text", maxlength: c.maxlength ?? 60, required: c.requis !== false, autocomplete: "off" }),
+		]),
+	);
+	const form = $("#form-simple");
+	form.onsubmit = async (evenement) => {
+		evenement.preventDefault();
+		const valeurs = Object.fromEntries(champs.map((c) => [c.nom, form.elements[c.nom].value]));
+		const reussi = await valider(valeurs, (message) => {
+			$("#erreur-simple").textContent = message;
+		});
+		if (reussi) $("#dialogue-simple").close();
+	};
+	$("#dialogue-simple").showModal();
+	form.querySelector("input")?.focus();
+}
+
+function ouvrirRejoindre() {
+	ouvrirDialogueSimple({
+		titre: "Rejoindre une famille",
+		aide: "Demande son code à un membre de la famille. Ta liste y sera visible et tu verras celles de ses membres.",
+		champs: [{ nom: "code", libelle: "Code de la famille", maxlength: 40 }],
+		bouton: "Rejoindre",
+		valider: async ({ code }, erreur) => {
+			const famille = await modifier("rejoindre-famille", { nouveauCode: code }, null, erreur);
+			if (!famille) return false;
+			notifier(`Bienvenue dans la famille ${famille.nom} !`);
+			changerFamille(famille.id);
+			return true;
+		},
+	});
+}
+
+function ouvrirCreer() {
+	ouvrirDialogueSimple({
+		titre: "Créer une famille",
+		aide: "Tu en feras partie. Donne ensuite le code aux autres membres.",
+		champs: [
+			{ nom: "nom", libelle: "Nom de la famille", maxlength: 60 },
+			{ nom: "code", libelle: "Code (4 caractères au moins)", maxlength: 40 },
+		],
+		bouton: "Créer",
+		valider: async ({ nom, code }, erreur) => {
+			const famille = await modifier("creer-famille", { nom, nouveauCode: code }, null, erreur);
+			if (!famille) return false;
+			notifier(`Famille ${famille.nom} créée.`);
+			changerFamille(famille.id);
+			return true;
+		},
+	});
+}
+
+function ouvrirAjoutPersonne() {
+	const famille = familleCourante();
+	if (!famille) return;
+	ouvrirDialogueSimple({
+		titre: `Ajouter à la famille ${famille.nom}`,
+		aide: "Pour un proche qui n'utilisera pas l'app (enfant, grands-parents…) : toute la famille pourra tenir sa liste. S'il s'y met plus tard, il choisira son prénom à la connexion.",
+		champs: [
+			{ nom: "prenom", libelle: "Prénom", maxlength: 40 },
+			{ nom: "nom", libelle: "Nom (facultatif)", maxlength: 60, requis: false },
+		],
+		bouton: "Ajouter",
+		valider: async ({ prenom, nom }, erreur) => {
+			const ajoutee = await modifier("ajouter-personne", { familleId: famille.id, prenom, nom }, `${prenom.trim()} ajouté(e).`, erreur);
+			if (!ajoutee) return false;
+			app.personneFamille = ajoutee.id;
+			changerOnglet("famille");
+			return true;
+		},
+	});
+}
+
+async function copierCode(famille) {
+	fermerMenu();
+	try {
+		await navigator.clipboard.writeText(famille.code);
+		notifier(`Code de la famille ${famille.nom} copié : ${famille.code}`);
+	} catch {
+		notifier(`Code de la famille ${famille.nom} : ${famille.code}`);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -538,13 +871,22 @@ function afficherEcran(nom) {
 	$("#ecran-app").hidden = nom !== "app";
 }
 
-function afficherChoixMembre(membres) {
+function afficherChoixMembre({ famille, personnes }) {
 	$("#form-code").hidden = true;
 	$("#choix-membre").hidden = false;
+	$("#titre-choix").textContent = `Famille ${famille.nom} : qui es-tu ?`;
+	const prenoms = personnes.map((p) => p.prenom);
 	$("#liste-membres").replaceChildren(
-		...membres.map((m) => el("button", { type: "button", class: "bouton", onclick: () => choisirMembre(m.id) }, m.prenom)),
+		...personnes.map((p) =>
+			el(
+				"button",
+				{ type: "button", class: "bouton", onclick: () => connecter("choisir", { personneId: p.id }) },
+				// Deux prénoms identiques : le nom les distingue.
+				prenoms.filter((x) => x === p.prenom).length > 1 && p.nom ? `${p.prenom} ${p.nom}` : p.prenom,
+			),
+		),
 	);
-	if (membres.length === 0) $("#champ-prenom").focus();
+	if (personnes.length === 0) $("#champ-prenom").focus();
 }
 
 function afficherSaisieCode(message = "") {
@@ -558,45 +900,42 @@ function afficherSaisieCode(message = "") {
 async function validerCode(evenement) {
 	evenement.preventDefault();
 	const bouton = evenement.submitter;
-	bouton.disabled = true;
+	if (bouton) bouton.disabled = true;
 	$("#erreur-connexion").textContent = "";
 	app.code = $("#champ-code").value.trim();
 	try {
-		const membres = await appelerApi("membres");
+		const famille = await appelerApi("famille");
 		ecrireStockage(CLES.code, app.code);
-		afficherChoixMembre(membres);
+		afficherChoixMembre(famille);
 	} catch (erreur) {
 		$("#erreur-connexion").textContent = erreur.message;
 	} finally {
-		bouton.disabled = false;
+		if (bouton) bouton.disabled = false;
 	}
 }
 
-async function ajouterMembre(evenement) {
-	evenement.preventDefault();
+/** Choisit (« choisir ») ou crée (« ajouter-moi ») le membre, puis ouvre l'app. */
+async function connecter(action, parametres) {
 	$("#erreur-connexion").textContent = "";
-	try {
-		const membre = await appelerApi("ajouter-membre", { prenom: $("#champ-prenom").value });
-		await choisirMembre(membre.id);
-	} catch (erreur) {
-		$("#erreur-connexion").textContent = erreur.message;
-	}
-}
-
-async function choisirMembre(id) {
-	app.membreId = id;
-	ecrireStockage(CLES.membre, id);
-	app.etat = null;
+	app.membreId = null;
 	app.selection.clear();
 	try {
-		appliquerEtat(await appelerApi("etat"));
+		appliquerEtat(await appelerApi(action, parametres));
+		const familleDuCode = app.etat.familles.find((f) => f.code.toLowerCase() === app.code.toLowerCase());
+		if (familleDuCode) changerFamille(familleDuCode.id);
 		afficherEcran("app");
-		if (app.onglet === "ma-liste" && !app.etat.cadeaux.some((c) => c.proprietaireId === id)) {
+		if (!app.etat.cadeaux.some((c) => c.proprietaireId === moi())) {
+			changerOnglet("ma-liste");
 			notifier(`Bienvenue ${app.etat.moi.prenom} ! Commence par ajouter tes idées.`);
 		}
 	} catch (erreur) {
 		$("#erreur-connexion").textContent = erreur.message;
 	}
+}
+
+async function ajouterMoi(evenement) {
+	evenement.preventDefault();
+	await connecter("ajouter-moi", { prenom: $("#champ-prenom").value });
 }
 
 async function changerDePersonne() {
@@ -608,7 +947,7 @@ async function changerDePersonne() {
 	afficherEcran("connexion");
 	$("#erreur-connexion").textContent = "";
 	try {
-		afficherChoixMembre(await appelerApi("membres"));
+		afficherChoixMembre(await appelerApi("famille"));
 	} catch (erreur) {
 		afficherSaisieCode(erreur.message);
 	}
@@ -713,11 +1052,15 @@ function enregistrerServiceWorker() {
 
 function brancherEvenements() {
 	$("#form-code").addEventListener("submit", validerCode);
-	$("#form-nouveau-membre").addEventListener("submit", ajouterMembre);
+	$("#form-nouveau-membre").addEventListener("submit", ajouterMoi);
 	$("#bouton-autre-code").addEventListener("click", () => deconnecter());
 	$("#form-cadeau").addEventListener("submit", enregistrerCadeau);
-	$("#bouton-annuler-cadeau").addEventListener("click", () => $("#dialogue-cadeau").close());
+	$("#form-historique").addEventListener("submit", enregistrerHistorique);
+	for (const bouton of document.querySelectorAll("[data-fermer]")) {
+		bouton.addEventListener("click", () => bouton.closest("dialog").close());
+	}
 	$("#bouton-actualiser").addEventListener("click", () => actualiser());
+	$("#choix-famille").addEventListener("change", (e) => changerFamille(e.target.value));
 	$("#bouton-menu").addEventListener("click", (e) => {
 		e.stopPropagation();
 		basculerMenu();
@@ -728,6 +1071,8 @@ function brancherEvenements() {
 	document.addEventListener("keydown", (e) => {
 		if (e.key === "Escape") fermerMenu();
 	});
+	$("#menu-rejoindre").addEventListener("click", ouvrirRejoindre);
+	$("#menu-creer").addEventListener("click", ouvrirCreer);
 	$("#menu-installer").addEventListener("click", installer);
 	$("#menu-changer").addEventListener("click", changerDePersonne);
 	$("#menu-deconnecter").addEventListener("click", () => deconnecter());
@@ -743,6 +1088,8 @@ function brancherEvenements() {
 }
 
 function demarrer() {
+	for (const element of document.querySelectorAll(".version")) element.textContent = `Version ${window.VERSION_APP ?? "?"}`;
+	if (!RENDUS[app.onglet]) app.onglet = "ma-liste";
 	brancherEvenements();
 	enregistrerServiceWorker();
 	if (estIos && !estInstallee) $("#menu-installer").hidden = false;

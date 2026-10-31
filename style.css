@@ -333,3 +333,67 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
 @media (prefers-reduced-motion: reduce) {
 	*, *::before, *::after { animation: none !important; }
 }
+
+/* Familles : sélecteur dans l'en-tête, codes dans le menu */
+.entete-titre { display: flex; flex-direction: column; min-width: 0; }
+.choix-famille {
+	width: auto; max-width: 60vw;
+	padding: 2px 28px 2px 0;
+	border: 0; border-radius: 0;
+	background: transparent;
+	color: inherit;
+	font-size: 0.85rem; font-weight: 600;
+	appearance: none;
+	background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+	background-position: calc(100% - 12px) 55%, calc(100% - 7px) 55%;
+	background-size: 5px 5px;
+	background-repeat: no-repeat;
+}
+.choix-famille option { color: var(--texte); background: var(--surface); }
+#libelle-famille:has(+ .choix-famille:not([hidden])) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.menu-familles { display: flex; flex-direction: column; border-bottom: 1px solid var(--bord); margin-bottom: 4px; padding-bottom: 4px; }
+.menu-familles:empty { display: none; }
+.menu .menu-code { display: flex; justify-content: space-between; gap: 12px; }
+.menu-code strong { font-family: ui-monospace, monospace; color: var(--rouge); }
+.menu-version { padding: 8px 12px 4px; border-top: 1px solid var(--bord); margin-top: 4px; font-size: 0.8rem; color: var(--texte-doux); }
+.connexion-carte .version { font-size: 0.8rem; }
+
+/* Famille : ajout d'une personne, suggestions, déjà offert */
+.puces .puce-ajout { border-style: dashed; color: var(--texte-doux); }
+.carte-note { font-size: 0.85rem; color: var(--or); font-weight: 600; }
+.deja-offert { background: var(--surface-2); border-radius: var(--rayon); padding: 10px 14px; }
+.deja-offert summary { cursor: pointer; font-weight: 600; }
+.deja-offert ul { margin: 8px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+
+/* Historique */
+.carte.compacte { padding: 12px 14px; align-items: flex-start; }
+.icone-supprimer {
+	flex: none;
+	width: 32px; height: 32px;
+	border-radius: 50%;
+	border: 0;
+	background: none;
+	color: var(--texte-doux);
+	font-size: 1.4rem; line-height: 1;
+	cursor: pointer;
+}
+.icone-supprimer:hover { background: var(--surface-2); color: var(--danger); }
+.destinataires { border: 1px solid var(--bord); border-radius: 10px; padding: 10px 12px; margin: 4px 0; display: flex; flex-direction: column; gap: 8px; }
+.destinataires legend { font-weight: 600; font-size: 0.95rem; padding: 0 4px; }
+.cases { display: flex; flex-wrap: wrap; gap: 6px; max-height: 160px; overflow-y: auto; }
+.case-texte {
+	display: inline-flex; align-items: center; gap: 6px;
+	font-weight: 500;
+	padding: 5px 12px 5px 8px;
+	border: 1px solid var(--bord);
+	border-radius: 999px;
+	cursor: pointer;
+}
+.case-texte input { width: 18px; height: 18px; margin: 0; accent-color: var(--rouge); }
+.case-texte:has(input:checked) { border-color: var(--rouge); background: var(--or-fond); }
+
+/* Cinq onglets : libellés plus petits sur les petits écrans */
+.onglets { grid-template-columns: repeat(5, 1fr); }
+@media (max-width: 360px) {
+	.onglets button { font-size: 0.68rem; }
+}

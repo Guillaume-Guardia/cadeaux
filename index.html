@@ -15,6 +15,7 @@
 	<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 	<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 	<link rel="stylesheet" href="style.css">
+	<script src="version.js" defer></script>
 	<script src="config.js" defer></script>
 	<script src="app.js" defer></script>
 </head>
@@ -35,7 +36,7 @@
 			</form>
 
 			<div id="choix-membre" class="pile" hidden>
-				<h2>Qui es-tu ?</h2>
+				<h2 id="titre-choix">Qui es-tu ?</h2>
 				<div id="liste-membres" class="liste-membres"></div>
 				<form id="form-nouveau-membre" class="pile">
 					<label for="champ-prenom">Pas dans la liste ? Ajoute ton prénom</label>
@@ -47,14 +48,16 @@
 				<button type="button" id="bouton-autre-code" class="lien-bouton">Changer de code</button>
 			</div>
 			<p id="erreur-connexion" class="erreur" role="alert"></p>
+			<p class="version discret"></p>
 		</div>
 	</main>
 
 	<!-- Application -->
 	<div id="ecran-app" class="app" hidden>
 		<header class="entete">
-			<div>
-				<p class="entete-sur">Cadeaux de Noël</p>
+			<div class="entete-titre">
+				<label for="choix-famille" class="entete-sur" id="libelle-famille">Cadeaux de Noël</label>
+				<select id="choix-famille" class="choix-famille" hidden></select>
 				<h1 id="titre-onglet">Ma liste</h1>
 			</div>
 			<div class="entete-actions">
@@ -64,9 +67,13 @@
 				<button type="button" id="bouton-menu" class="icone-bouton avatar" aria-label="Menu" aria-haspopup="menu" aria-expanded="false"></button>
 				<div id="menu" class="menu" role="menu" hidden>
 					<p id="menu-nom" class="menu-nom"></p>
+					<div id="menu-familles" class="menu-familles"></div>
+					<button type="button" role="menuitem" id="menu-rejoindre">Rejoindre une famille</button>
+					<button type="button" role="menuitem" id="menu-creer">Créer une famille</button>
 					<button type="button" role="menuitem" id="menu-installer" hidden>Installer l'app</button>
 					<button type="button" role="menuitem" id="menu-changer">Changer de personne</button>
 					<button type="button" role="menuitem" id="menu-deconnecter">Se déconnecter</button>
+					<p class="version menu-version"></p>
 				</div>
 			</div>
 		</header>
@@ -96,13 +103,18 @@
 				<span>J'offre</span>
 				<span id="compteur-reservations" class="pastille" hidden></span>
 			</button>
+			<button type="button" data-onglet="historique">
+				<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5M12 7v5l3 2"/></svg>
+				<span>Historique</span>
+			</button>
 		</nav>
 	</div>
 
-	<!-- Formulaire d'un cadeau -->
+	<!-- Formulaire d'une idée de cadeau -->
 	<dialog id="dialogue-cadeau" class="dialogue">
 		<form id="form-cadeau" method="dialog" class="pile">
 			<h2 id="titre-dialogue">Nouvelle idée</h2>
+			<p id="aide-dialogue" class="discret"></p>
 			<label for="cadeau-titre">Quoi ?</label>
 			<input id="cadeau-titre" name="titre" maxlength="120" required placeholder="Ex : un pull en laine">
 			<label for="cadeau-description">Détails <span class="discret">(taille, couleur…)</span></label>
@@ -125,8 +137,59 @@
 			</div>
 			<p id="erreur-cadeau" class="erreur" role="alert"></p>
 			<div class="ligne fin">
-				<button type="button" id="bouton-annuler-cadeau" class="bouton">Annuler</button>
+				<button type="button" class="bouton" data-fermer>Annuler</button>
 				<button type="submit" class="bouton principal">Enregistrer</button>
+			</div>
+		</form>
+	</dialog>
+
+	<!-- Formulaire d'un cadeau offert (historique) -->
+	<dialog id="dialogue-historique" class="dialogue">
+		<form id="form-historique" method="dialog" class="pile">
+			<h2>Cadeau offert</h2>
+			<label for="historique-details">Quoi ?</label>
+			<input id="historique-details" name="details" maxlength="300" required>
+			<div class="ligne deux">
+				<div class="pile">
+					<label for="historique-date">Date</label>
+					<input id="historique-date" name="date" type="date" required>
+				</div>
+				<div class="pile">
+					<label for="historique-occasion">Occasion</label>
+					<select id="historique-occasion" name="occasion">
+						<option>Noël</option>
+						<option>Anniversaire</option>
+						<option>Naissance</option>
+						<option>Autre</option>
+					</select>
+				</div>
+			</div>
+			<fieldset class="destinataires">
+				<legend>Pour qui ?</legend>
+				<div id="historique-personnes" class="cases"></div>
+				<label for="historique-autres" class="discret">Autres <span>(séparés par des virgules)</span></label>
+				<input id="historique-autres" name="autres" maxlength="300">
+			</fieldset>
+			<label for="historique-prix">Prix (€) <span class="discret">(facultatif)</span></label>
+			<input id="historique-prix" name="prix" type="number" min="0" step="0.01" inputmode="decimal">
+			<p id="erreur-historique" class="erreur" role="alert"></p>
+			<div class="ligne fin">
+				<button type="button" class="bouton" data-fermer>Annuler</button>
+				<button type="submit" class="bouton principal">Enregistrer</button>
+			</div>
+		</form>
+	</dialog>
+
+	<!-- Petit formulaire générique (rejoindre / créer une famille, ajouter une personne) -->
+	<dialog id="dialogue-simple" class="dialogue">
+		<form id="form-simple" method="dialog" class="pile">
+			<h2 id="simple-titre"></h2>
+			<p id="simple-aide" class="discret"></p>
+			<div id="simple-champs" class="pile"></div>
+			<p id="erreur-simple" class="erreur" role="alert"></p>
+			<div class="ligne fin">
+				<button type="button" class="bouton" data-fermer>Annuler</button>
+				<button type="submit" class="bouton principal" id="simple-valider">Valider</button>
 			</div>
 		</form>
 	</dialog>

@@ -1,12 +1,16 @@
 // Service worker : l'app (fichiers de ce site) reste disponible hors ligne.
-// Changer VERSION à chaque modification des fichiers pour proposer la mise à jour.
-const VERSION = "cadeaux-v1";
+// Le cache porte la version de version.js : l'augmenter propose la mise à jour aux téléphones
+// (le navigateur compare aussi les scripts importés ici).
+importScripts("version.js");
+
+const VERSION = `cadeaux-${self.VERSION_APP}`;
 const FICHIERS = [
 	"./",
 	"index.html",
 	"style.css",
 	"app.js",
 	"config.js",
+	"version.js",
 	"manifest.webmanifest",
 	"icons/icon.svg",
 	"icons/icon-192.png",
